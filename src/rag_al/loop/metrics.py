@@ -3,7 +3,6 @@ from __future__ import annotations
 import itertools
 
 import numpy as np
-import pandas as pd
 
 
 def best_fitness(labeled_y: np.ndarray) -> float:

@@ -78,6 +78,43 @@ class ALDataset:
     def labeled_indices(self) -> np.ndarray:
         """Global indices (into the full dataset) of labeled variants."""
         return np.where(self._labeled_mask)[0]
+    
+    @property
+    def wt_sequence(self) -> str:
+        """Wild-type sequence (same for all variants in the dataset)."""
+        return self._df["wt_sequence"].iloc[0]
+    
+    def get_sequences(self, global_indices: np.ndarray | list[int]) -> list[str]:
+        """
+        Get mutated sequences for a set of global dataset indices.
+
+        Parameters
+        ----------
+        global_indices : array-like of int
+            Global indices into the full dataset.
+
+        Returns
+        -------
+        list[str]
+            Mutated sequences corresponding to the provided global indices.
+        """
+        return self._df["mutated_sequence"].iloc[global_indices].tolist()
+
+    def get_variant_ids(self, global_indices: np.ndarray | list[int]) -> list[str]:
+        """
+        Get variant IDs for a set of global dataset indices.
+
+        Parameters
+        ----------
+        global_indices : array-like of int
+            Global indices into the full dataset.
+
+        Returns
+        -------
+        list[str]
+            Variant IDs corresponding to the provided global indices.
+        """
+        return self._df["variant_id"].iloc[global_indices].tolist()
 
     # ------------------------------------------------------------------
     # Unlabeled pool (safe for the AL loop — no fitness exposed)
@@ -120,6 +157,27 @@ class ALDataset:
                 "This should not happen — check the acquisition function."
             )
         self._labeled_mask[global_indices] = True
+
+    def fitness_at(self, global_indices: np.ndarray | list[int]) -> np.ndarray:
+        """
+        Get fitness scores for a set of global dataset indices.
+
+        May only be called for indices that have already been revealed
+        (i.e., after ``reveal()`` has been called for those indices in
+        the current or a prior round). Intended for post-reveal metric
+        capture (e.g., ``batch_y``) and post-loop evaluation.
+
+        Parameters
+        ----------
+        global_indices : array-like of int
+            Global indices into the full dataset.
+
+        Returns
+        -------
+        np.ndarray
+            Fitness scores corresponding to the provided global indices.
+        """
+        return self.__fitness[np.asarray(global_indices, dtype=int)].copy()
 
     # ------------------------------------------------------------------
     # Metric helpers (full-label access is allowed for evaluation)

@@ -128,7 +128,6 @@ def get_run_logger(
     also_stdout : bool
         Whether to also write to stdout (default True).
     """
-    p = cfg.paths
     lp = get_log_paths(cfg)
     ctx: dict[str, Any] = {
         "dataset": cfg.dataset,

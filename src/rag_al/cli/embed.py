@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 rag-embed — Pre-compute and cache ESM-2 embeddings for a dataset.
 
@@ -12,13 +10,14 @@ Usage
 rag-embed --dataset BLAT_ECOLX --esm_model facebook/esm2_t33_650M_UR50D
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 
 def _parse_args() -> argparse.Namespace:
