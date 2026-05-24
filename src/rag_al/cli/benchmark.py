@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 rag-benchmark — Run one active learning benchmark cell.
 
@@ -12,6 +10,8 @@ Usage
 -----
 rag-benchmark --dataset BLAT_ECOLX --representation plm_mean --acquisition ucb --seed 0
 """
+
+from __future__ import annotations
 
 import sys
 
@@ -38,7 +38,7 @@ def main() -> None:
     log.info("=" * 60)
 
     try:
-        results = _run(cfg, log)
+        results, selections = _run(cfg, log)
     except Exception as e:
         log.exception("Run failed: %s", e)
         sys.exit(1)
@@ -46,11 +46,11 @@ def main() -> None:
     results.to_csv(p.seed_results_csv, index=False)
     log.info("Results written to %s", p.seed_results_csv)
 
+    selections.to_csv(p.seed_selections_csv, index=False)
+    log.info("Selections written to %s", p.seed_selections_csv)
+
 
 def _run(cfg, log):
-    import numpy as np
-    import pandas as pd
-
     from ..data.loader import load_dataset
     from ..data.al_dataset import ALDataset
     from ..loop.runner import run_al_loop
@@ -77,7 +77,7 @@ def _run(cfg, log):
     acquisition = _build_acquisition(cfg)
 
     # ---- Run loop -----------------------------------------------------------
-    results = run_al_loop(
+    results, selections = run_al_loop(
         dataset=dataset,
         encoder=encoder,
         surrogate=surrogate,
@@ -94,7 +94,12 @@ def _run(cfg, log):
     results.insert(2, "acquisition", cfg.acquisition)
     results.insert(3, "seed", cfg.seed)
 
-    return results
+    selections.insert(0, "dataset", cfg.dataset)
+    selections.insert(1, "representation", cfg.representation)
+    selections.insert(2, "acquisition", cfg.acquisition)
+    selections.insert(3, "seed", cfg.seed)
+
+    return results, selections
 
 
 def _build_encoder(cfg, log):
