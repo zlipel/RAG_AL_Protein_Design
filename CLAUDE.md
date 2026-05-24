@@ -16,11 +16,10 @@ ruff check src/
 # Type check
 mypy src/
 
-# Run all tests (no tests exist yet — see docs/implementation_map.md for the test plan)
 pytest
 
 # Run a single test file
-pytest tests/test_al_dataset.py -v
+pytest tests/test_runner_batch_y.py -v
 
 # Pre-compute ESM-2 embeddings (GPU; run once per dataset before benchmark)
 rag-embed --dataset BLAT_ECOLX --esm_model facebook/esm2_t6_8M_UR50D
@@ -112,7 +111,7 @@ Runs one (dataset × representation × acquisition × seed) cell. The full bench
 - `reveal(pool_local_indices)` is the **only** authorized path from hidden → labeled. It raises `LeakageError` on double-reveal.
 - `labeled_y` exposes fitness only for the currently labeled subset.
 - `global_optimum` and `top_k_global_indices()` access the full label array — authorized for metric computation only; must never be called inside acquisition functions.
-- **Known risk**: `_df` (single underscore) still holds the full DataFrame including `fitness`. Two public helpers (`wt_sequence` property, `get_sequences()` method) exist to avoid needing `_df` from outside the class — use those. See Bug #2 in `docs/bugs.md`.
+- `_df` (single underscore) still holds the full DataFrame including `fitness`. Use the public helpers instead: `wt_sequence` property, `get_sequences(global_indices)`, `get_variant_ids(global_indices)`, `fitness_at(global_indices)`. Never read `_df["fitness"]` outside `ALDataset`.
 
 ### AL loop execution order (`src/rag_al/loop/runner.py`)
 
@@ -124,9 +123,14 @@ Each round in `run_al_loop()`:
 5. `surrogate.predict(X_pool)` → `(mu, sigma)`
 6. `acquisition.select_batch(mu, sigma, ..., labeled_y=labeled_y)` → local pool indices
 7. `global_selected = pool_indices[selected_local]` (save before reveal)
-8. `dataset.reveal(selected_local)` — the only label exposure point
-9. Extract `batch_y` from revealed labels (see Bug #1 in `docs/bugs.md` — currently wrong)
-10. `compute_round_metrics(...)` — records best_fitness, simple_regret, topk_recall, etc.
+8. `batch_sequences = dataset.get_sequences(global_selected)` — sequences before reveal
+9. `dataset.reveal(selected_local)` — the only label exposure point
+10. `batch_y = dataset.fitness_at(global_selected)` — fitness by global index, post-reveal
+11. Log selections (round, global_index, variant_id, fitness) to `selections` list
+12. `compute_round_metrics(...)` — records best_fitness, simple_regret, topk_recall, etc.
+
+`run_al_loop()` returns `(results_df, selections_df)`. `benchmark.py` saves both:
+`seed_<N>.csv` (metrics) and `seed_<N>_selections.csv` (per-round acquisition log).
 
 ### Config pattern
 
@@ -157,15 +161,17 @@ All implement `select_batch(mu, sigma, batch_size, *, pool_X, labeled_X, labeled
 
 ---
 
-## Known Bugs (edits in place)
+## Known Bugs
 
-The scaffold has documented bugs that are being fixed on `audit/agent-scaffold`. See `docs/bugs.md` for full details. The most critical:
+See `docs/bugs.md` for full details and fix history.
 
-**Bug #1 (runner.py:160)** — `batch_y = dataset.labeled_y[-len(selected_local):]` is wrong.
-`labeled_y` is ordered by dataset row index, not insertion order. Newly revealed variants
-are not at the tail. Fix: use `dataset.fitness_at(global_selected)` after reveal.
-
-**Bug #3 (retrieval.py:86)** — Self-neighbor inclusion when transform is called on the labeled set. Fix: request k+1 neighbors and slice off index 0.
+| Bug | Status | Location |
+|---|---|---|
+| Bug #1 — wrong `batch_y` after reveal | ✅ Fixed | `runner.py` — now uses `dataset.fitness_at(global_selected)` |
+| Bug #2 — `dataset._df` accessed from runner | ✅ Fixed | `runner.py` — now uses `get_sequences()` / `get_variant_ids()` |
+| Gap #1 — selections not logged | ✅ Fixed | `runner.py` returns `(results, selections)`; saved to `seed_N_selections.csv` |
+| Bug #3 — self-neighbor in `RetrievalAugmentedEncoder` | ❌ Open | `retrieval.py:86` — kNN returns self at distance 0; fix on `fix/retrieval-self-neighbor` |
+| Bug #4 — dead code in `physicochemical.py` | ❌ Open | `physicochemical.py` — `net_charge += ... * 0.0` line |
 
 ---
 
