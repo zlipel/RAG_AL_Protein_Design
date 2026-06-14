@@ -51,6 +51,9 @@ class _IdentityEncoder:
     def fit(self, df, y):
         pass
 
+    def transform_labeled(self, df) -> np.ndarray:
+        return self.transform(df)
+
     def transform(self, df) -> np.ndarray:
         out = np.zeros((len(df), 20), dtype=float)
         for i, seq in enumerate(df["mutated_sequence"]):

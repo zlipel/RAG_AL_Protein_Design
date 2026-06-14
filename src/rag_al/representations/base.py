@@ -57,9 +57,19 @@ class AbstractEncoder(ABC):
     def n_features(self) -> int:
         """Dimensionality of the output feature vector."""
 
+    def transform_labeled(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Encode the labeled set.
+
+        Default delegates to ``transform()``. Encoders that suffer from
+        self-neighbor contamination (e.g. ``RetrievalAugmentedEncoder``)
+        override this to exclude self from kNN queries.
+        """
+        return self.transform(df)
+
     def fit_transform(
         self, df_labeled: pd.DataFrame, y_labeled: np.ndarray
     ) -> np.ndarray:
         """Convenience: fit on labeled data and immediately transform it."""
         self.fit(df_labeled, y_labeled)
-        return self.transform(df_labeled)
+        return self.transform_labeled(df_labeled)

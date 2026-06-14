@@ -119,7 +119,7 @@ def run_al_loop(
             log.exception("Encoder fit failed at round %d: %s", round_idx, e)
             raise
 
-        X_labeled = encoder.transform(df_labeled)   # (n_lab, D)
+        X_labeled = encoder.transform_labeled(df_labeled)   # (n_lab, D)
 
         # ---- 2. Encode pool --------------------------------------------------
         df_pool = dataset.pool_df
