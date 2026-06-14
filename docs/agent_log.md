@@ -3,6 +3,38 @@
 
 ---
 
+## 2026-06-14 — Fix Bug #3 (self-neighbor in retrieval) and Bug #4 (dead code)
+
+**Branch:** `fix/bug3-retrieval-self-neighbor-bug4-dead-code`
+**Commit:** `1a95adf`
+
+### Task summary
+- **Bug #3 (Medium):** `RetrievalAugmentedEncoder.transform(labeled_df)` included each labeled point as its own nearest neighbor (distance = 0) during surrogate training. `mean_y`, `std_y`, and `max_y` retrieval features for labeled points were self-referential while pool features were clean, creating a train/predict asymmetry that distorted surrogate calibration for `plm_retrieval`. The `_dist_scale` normalization in `fit()` was also biased — self-distance zeros pulled the median toward 0.
+- **Bug #4 (Minor):** Dead code line in `physicochemical.py`: `net_charge += _AA_HYDROPATHY.get(aa, 0.0) * 0.0` always evaluates to `0.0`. Deleted.
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/rag_al/representations/base.py` | Added `transform_labeled()` concrete method (default: delegates to `transform()`); updated `fit_transform()` to call `transform_labeled()` |
+| `src/rag_al/representations/retrieval.py` | Added `transform_labeled()` override with `exclude_self=True`; updated `_retrieval_features()` to accept `exclude_self` kwarg; fixed `fit()` `_dist_scale` to exclude self column |
+| `src/rag_al/loop/runner.py` | Changed `encoder.transform(labeled_df)` → `encoder.transform_labeled(labeled_df)` |
+| `src/rag_al/representations/physicochemical.py` | Deleted dead code line |
+| `tests/test_retrieval_self_neighbor.py` | New: 5 tests covering Bug #3 fix |
+| `tests/test_runner_batch_y.py` | Added `transform_labeled()` to `_IdentityEncoder` stub |
+
+### Tests run
+
+```
+pytest tests/ -v   →  11/11 passed (1.27s)
+ruff check src/    →  All checks passed
+mypy src/          →  Same 28 pre-existing errors; no new errors
+```
+
+### Remaining concerns
+- **ESMEncoder cache** — Cache key mismatch means embeddings are recomputed every round. Performance issue; not correctness.
+
+---
+
 ## 2026-06-14 — Fix Bug #1, Bug #2, Gap #1
 
 **Branch:** `fix/reveal-result-selection-loggin`
