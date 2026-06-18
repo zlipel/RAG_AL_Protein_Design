@@ -3,6 +3,48 @@
 
 ---
 
+## 2026-06-17 — PLM cache: replace order-validated array cache with seq-hash dict
+
+**Branch:** `fix/plm-cache-hashmap`
+
+### Task summary
+`ESMEncoder` cached embeddings as a dense `.npy` array validated by an exact, ordered
+list of `variant_ids`. Any subset call (the AL loop calls `transform(labeled_df)` and
+`transform(pool_df)` every round with different slices) failed the ordering check and
+re-ran the ESM model from scratch, making the `rag-embed` pre-compute step useless.
+Additionally, `transform()` had a `SyntaxError` (bare `for` on line 262) from an
+incomplete earlier fix, making any cache-hit path crash immediately.
+
+The fix replaces the two-file array cache (`embeddings_*.npy` + `variant_ids_*.npy`)
+with a single `{sha256(sequence) → embedding}` pickle dict (`cache_*.pkl`). Subset
+calls now look up each hash individually and only call `_embed_sequences()` for misses.
+The WT embedding for delta mode is stored in the same dict via `fit()`. The in-memory
+`_embedding_cache` dict is loaded once and kept alive for the lifetime of the encoder
+instance; `_save_cache()` writes to disk only when new embeddings are computed.
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/rag_al/representations/plm.py` | Replaced `_cache_path`/`_ids_cache_path`/`_try_load_cache`/`_save_cache` with `_cache_path`/`_seq_hash`/`_load_cache`/`_save_cache`; rewrote `transform()` and updated `fit()` for delta WT caching; added `hashlib`/`pickle` imports |
+| `tests/test_esm_cache.py` | New: 7 tests covering `cache_dir=None`, full compute+save, full hit, partial miss, delta WT caching, and row-order preservation |
+
+### Tests run
+
+```
+pytest tests/test_esm_cache.py -v   →  7/7 passed
+pytest tests/ -v                    →  18/18 passed
+ruff check src/rag_al/representations/plm.py  →  All checks passed
+mypy src/rag_al/representations/plm.py        →  Same pre-existing lazy-import errors; no new errors
+```
+
+### Remaining concerns
+- Pickle format is opaque and version-sensitive; a future migration to `.npz` or HDF5
+  would be needed for very large datasets or cross-Python-version portability.
+- Existing `.npy`/`_ids.npy` cache files from prior `rag-embed` runs are silently
+  ignored (no migration). Re-run `rag-embed` to populate the new `.pkl` cache.
+
+---
+
 ## 2026-06-14 — Fix Bug #3 (self-neighbor in retrieval) and Bug #4 (dead code)
 
 **Branch:** `fix/bug3-retrieval-self-neighbor-bug4-dead-code`

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import pickle
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -48,8 +52,10 @@ class ESMEncoder(AbstractEncoder):
              Captures the representation shift induced by mutations.
     'site'   Not yet implemented; falls back to 'mean'.
 
-    Embeddings are computed once and cached to disk as .npy files.
-    On subsequent calls the cache is loaded instead of re-running the model.
+    Embeddings are cached to disk as a {seq_hash → embedding} pickle dict.
+    Subsequent calls look up existing hashes and only embed missing sequences,
+    so subset calls (e.g. labeled/pool splits in the AL loop) are served from
+    cache without re-running the model.
 
     Parameters
     ----------
@@ -86,6 +92,9 @@ class ESMEncoder(AbstractEncoder):
         self._wt_embedding: Optional[np.ndarray] = None   # shape (D,)
         self._hidden_size: Optional[int] = None
 
+        # None = not yet loaded from disk; {} = loaded but empty
+        self._embedding_cache: Optional[dict[str, np.ndarray]] = None
+
         # Model/tokenizer loaded lazily on first use
         self._tokenizer = None
         self._model = None
@@ -109,39 +118,46 @@ class ESMEncoder(AbstractEncoder):
         if self.cache_dir is None:
             return None
         safe = self.model_name.replace("/", "__")
-        return self.cache_dir / f"embeddings_{safe}_{self.mode}.npy"
+        return self.cache_dir / f"cache_{safe}.pkl"
 
-    def _ids_cache_path(self) -> Optional[Path]:
-        if self.cache_dir is None:
-            return None
-        safe = self.model_name.replace("/", "__")
-        return self.cache_dir / f"variant_ids_{safe}_{self.mode}.npy"
+    def _seq_hash(self, seq: str) -> str:
+        return hashlib.sha256(seq.encode()).hexdigest()
 
-    def _try_load_cache(
-        self, variant_ids: list[str]
-    ) -> Optional[np.ndarray]:
+    def _load_cache(self) -> None:
+        """Populate _embedding_cache from disk. No-op if already loaded."""
+        if self._embedding_cache is not None:
+            return
         cp = self._cache_path()
-        ip = self._ids_cache_path()
-        if cp is None or not cp.exists() or ip is None or not ip.exists():
-            return None
-        cached_ids: np.ndarray = np.load(ip, allow_pickle=True)
-        if list(cached_ids) != variant_ids:
-            log.debug("Cache variant order mismatch — recomputing embeddings.")
-            return None
-        log.info("Loading cached embeddings from %s", cp)
-        return np.load(cp)
+        if cp is not None and cp.exists():
+            with open(cp, "rb") as f:
+                loaded: dict[str, np.ndarray] = pickle.load(f)
+            self._embedding_cache = loaded
+            log.info(
+                "Loaded embedding cache (%d entries) from %s",
+                len(loaded), cp,
+            )
+        else:
+            self._embedding_cache = {}
 
-    def _save_cache(
-        self, embeddings: np.ndarray, variant_ids: list[str]
-    ) -> None:
+    def _save_cache(self) -> None:
         cp = self._cache_path()
-        ip = self._ids_cache_path()
         if cp is None:
             return
+        assert self._embedding_cache is not None
         cp.parent.mkdir(parents=True, exist_ok=True)
-        np.save(cp, embeddings)
-        np.save(ip, np.array(variant_ids, dtype=object))
-        log.info("Saved embeddings cache to %s", cp)
+        fd, tmp_str = tempfile.mkstemp(dir=cp.parent, suffix=".tmp")
+        tmp = Path(tmp_str)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(self._embedding_cache, f)
+            tmp.replace(cp)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        log.info(
+            "Saved embedding cache (%d entries) to %s",
+            len(self._embedding_cache), cp,
+        )
 
     # ------------------------------------------------------------------
     # Core embedding computation
@@ -151,15 +167,10 @@ class ESMEncoder(AbstractEncoder):
         """
         Compute mean-pooled ESM-2 embeddings for a list of sequences.
 
-        Parameters
-        ----------
-        sequences : list of str
-            Amino acid sequences.
-
         Returns
         -------
         np.ndarray
-            Shape (N, D), float32 → upcast to float64.
+            Shape (N, D), float64.
         """
         self._load_model()
         _lazy_imports()
@@ -186,15 +197,10 @@ class ESMEncoder(AbstractEncoder):
             # tokens 0 and -1 are <cls>/<eos> — mask them out
             hidden = outputs.last_hidden_state  # (B, L+2, D)
             attention_mask = inputs["attention_mask"]  # (B, L+2)
-            # Exclude special tokens: positions 0 and last non-pad token
-            # Simple approach: mask out position 0 (cls) and rely on
-            # attention_mask to handle padding
-            # We zero the cls position
             mask = attention_mask.clone().float()
             mask[:, 0] = 0.0  # zero out <cls>
-            # For each sequence, also zero out the last non-padding token (<eos>)
             for i, length in enumerate(attention_mask.sum(dim=1)):
-                mask[i, length - 1] = 0.0
+                mask[i, length - 1] = 0.0  # zero out <eos>
 
             mask_expanded = mask.unsqueeze(-1)  # (B, L+2, 1)
             sum_hidden = (hidden * mask_expanded).sum(dim=1)  # (B, D)
@@ -226,8 +232,17 @@ class ESMEncoder(AbstractEncoder):
         if self._wt_sequence is None:
             self._wt_sequence = wt
         if self.mode == "delta" and self._wt_embedding is None:
-            log.info("Computing WT embedding for delta mode.")
-            self._wt_embedding = self._embed_sequences([wt])[0]
+            wt_key = self._seq_hash(wt)
+            self._load_cache()
+            assert self._embedding_cache is not None
+            if wt_key in self._embedding_cache:
+                self._wt_embedding = self._embedding_cache[wt_key]
+                log.debug("WT embedding loaded from cache.")
+            else:
+                log.info("Computing WT embedding for delta mode.")
+                self._wt_embedding = self._embed_sequences([wt])[0]
+                self._embedding_cache[wt_key] = self._wt_embedding
+                self._save_cache()
 
     def transform(self, df: pd.DataFrame) -> np.ndarray:
         """
@@ -236,7 +251,7 @@ class ESMEncoder(AbstractEncoder):
         Parameters
         ----------
         df : pd.DataFrame
-            Must contain 'mutated_sequence' and 'variant_id'.
+            Must contain 'mutated_sequence'.
 
         Returns
         -------
@@ -245,19 +260,25 @@ class ESMEncoder(AbstractEncoder):
             D = 320 for esm2_t6_8M, 1280 for esm2_t33_650M, etc.
         """
         sequences = list(df["mutated_sequence"])
-        variant_ids = list(df["variant_id"])
+        keys = [self._seq_hash(seq) for seq in sequences]
 
-        # Try cache first
-        cached = self._try_load_cache(variant_ids)
-        if cached is not None:
-            emb = cached
-        else:
+        self._load_cache()
+        assert self._embedding_cache is not None
+
+        missing_indices = [i for i, k in enumerate(keys) if k not in self._embedding_cache]
+
+        if missing_indices:
             log.info(
-                "Computing ESM-2 (%s) embeddings for %d sequences.",
-                self.model_name, len(sequences),
+                "Computing ESM-2 (%s) embeddings for %d new sequences.",
+                self.model_name, len(missing_indices),
             )
-            emb = self._embed_sequences(sequences)
-            self._save_cache(emb, variant_ids)
+            missing_seqs = [sequences[i] for i in missing_indices]
+            new_embs = self._embed_sequences(missing_seqs)
+            for i, emb in zip(missing_indices, new_embs):
+                self._embedding_cache[keys[i]] = emb
+            self._save_cache()
+
+        emb = np.stack([self._embedding_cache[k] for k in keys])
 
         if self.mode == "mean":
             return emb
@@ -274,7 +295,6 @@ class ESMEncoder(AbstractEncoder):
     def n_features(self) -> int:
         if self._hidden_size is not None:
             return self._hidden_size
-        # Return known sizes for common ESM-2 models
         _KNOWN_SIZES = {
             "facebook/esm2_t6_8M_UR50D": 320,
             "facebook/esm2_t12_35M_UR50D": 480,
