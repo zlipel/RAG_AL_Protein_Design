@@ -47,26 +47,39 @@ main
 
 ---
 
-## Fix Queue (from docs/bugs.md)
+## Fix Queue
 
-Work through these in priority order. Each gets its own fix branch.
+All documented findings have been addressed.
 
-| Priority | Branch name | Covers |
-|----------|-------------|--------|
-| 1 | `fix/reveal-result-selection-loggin` | Bug #1 (wrong `batch_y`) + Gap #1 (selection logging). These are coupled: the Bug #1 fix captures `global_selected` before `reveal()`, and Gap #1 logs those same indices. |
-| 2 | `fix/dataset-private-access` | Bug #2 (`dataset._df` accessed directly from runner) |
-| 3 | `fix/retrieval-self-neighbor` | Bug #3 (self-label inclusion in `RetrievalAugmentedEncoder`) |
-| 4 | `fix/dead-code-physicochemical` | Bug #4 (dead code in `physicochemical.py`) |
-| 5 | `fix/esm-cache-subset-lookup` | Performance: ESMEncoder cache misses every round |
+| Priority | Branch | Covers | Status |
+|----------|--------|--------|--------|
+| 1 | `fix/reveal-result-selection-loggin` | Bug #1 (wrong `batch_y`) + Gap #1 (selection logging) | ✅ Merged — `audit/agent-scaffold` |
+| 2 | `fix/dataset-private-access` | Bug #2 (`dataset._df` accessed directly from runner) | ✅ Merged — `audit/agent-scaffold` |
+| 3 | `fix/retrieval-self-neighbor` | Bug #3 (self-label inclusion in `RetrievalAugmentedEncoder`) | ✅ Merged — `audit/agent-scaffold` |
+| 4 | `fix/dead-code-physicochemical` | Bug #4 (dead code in `physicochemical.py`) | ✅ Merged — `audit/agent-scaffold` |
+| 5 | `fix/plm-cache-hashmap` | Performance: ESMEncoder cache (hashmap + atomic save) | ✅ Complete, pending merge |
+
+> Note: `fix/reveal-result-selection-loggin` has a deliberate typo in the branch name.
+> `fix/dataset-private-access` was folded into the same commit as Bug #1/Gap #1.
 
 ---
 
-## Final Merge to Main
+## Current State
 
-When all fixes are merged into `audit/agent-scaffold` and the scaffold is in a
-satisfactory state (smoke test passes, all documented bugs resolved):
+All original audit findings (Bugs #1–4, Gap #1, ESMEncoder performance) are resolved.
+The scaffold is ready for a final merge to `main` once `fix/plm-cache-hashmap` is merged
+into `audit/agent-scaffold`:
 
 ```bash
+# 1. Merge the PLM cache branch
+git checkout audit/agent-scaffold
+git merge --no-ff fix/plm-cache-hashmap
+
+# 2. Verify full test suite
+pytest tests/ -v
+ruff check src/
+
+# 3. Merge to main
 git checkout main
 git merge --no-ff audit/agent-scaffold -m "merge: audited agent scaffold into main"
 ```
@@ -75,9 +88,7 @@ git merge --no-ff audit/agent-scaffold -m "merge: audited agent scaffold into ma
 
 ## Notes
 
-- The first fix branch (`fix/reveal-result-selection-loggin`) has a deliberate
-  typo in the name. The name is carried through as-is.
-- `docs/bugs.md` is the source of truth for what needs fixing.
+- `docs/bugs.md` is the source of truth for what needed fixing and what was done.
 - `docs/implementation_map.md` is the source of truth for why each module is
   structured the way it is and what the authorized label-access paths are.
-- Update `docs/bugs.md` as each fix is completed (mark resolved, note the commit).
+- `docs/agent_log.md` has the detailed per-fix change history with test results.
