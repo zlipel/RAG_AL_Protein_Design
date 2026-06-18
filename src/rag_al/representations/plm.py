@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import pickle
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -116,7 +118,7 @@ class ESMEncoder(AbstractEncoder):
         if self.cache_dir is None:
             return None
         safe = self.model_name.replace("/", "__")
-        return self.cache_dir / f"cache_{safe}_{self.mode}.pkl"
+        return self.cache_dir / f"cache_{safe}.pkl"
 
     def _seq_hash(self, seq: str) -> str:
         return hashlib.sha256(seq.encode()).hexdigest()
@@ -143,8 +145,15 @@ class ESMEncoder(AbstractEncoder):
             return
         assert self._embedding_cache is not None
         cp.parent.mkdir(parents=True, exist_ok=True)
-        with open(cp, "wb") as f:
-            pickle.dump(self._embedding_cache, f)
+        fd, tmp_str = tempfile.mkstemp(dir=cp.parent, suffix=".tmp")
+        tmp = Path(tmp_str)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(self._embedding_cache, f)
+            tmp.replace(cp)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
         log.info(
             "Saved embedding cache (%d entries) to %s",
             len(self._embedding_cache), cp,

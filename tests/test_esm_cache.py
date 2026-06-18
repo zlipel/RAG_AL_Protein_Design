@@ -165,3 +165,30 @@ def test_transform_preserves_row_order(tmp_path):
     for i, seq in enumerate(seqs):
         expected = float(ord(seq[0]))
         assert result[i, 0] == expected, f"Row {i} mismatch: got {result[i,0]}, want {expected}"
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Overlapping calls — only the truly new sequences are embedded
+# ---------------------------------------------------------------------------
+
+def test_overlapping_calls_embed_only_new(tmp_path):
+    """Two transform calls with partial overlap; second embeds only the diff."""
+    first_seqs  = ["AAAA", "BBBB", "CCCC"]
+    second_seqs = ["BBBB", "CCCC", "DDDD", "EEEE"]  # BBBB+CCCC overlap, DDDD+EEEE new
+
+    encoder = ESMEncoder(mode="mean", cache_dir=tmp_path)
+    with patch.object(encoder, "_embed_sequences", side_effect=_fake_embed):
+        encoder.transform(_make_df(first_seqs))
+
+    with patch.object(encoder, "_embed_sequences", side_effect=_fake_embed) as mock_emb:
+        result = encoder.transform(_make_df(second_seqs))
+
+    # Only DDDD and EEEE should have been passed to _embed_sequences
+    mock_emb.assert_called_once()
+    embedded = set(mock_emb.call_args[0][0])
+    assert embedded == {"DDDD", "EEEE"}
+
+    # Result shape and values are correct
+    assert result.shape == (4, _D)
+    for i, seq in enumerate(second_seqs):
+        assert result[i, 0] == float(ord(seq[0]))
