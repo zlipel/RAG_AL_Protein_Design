@@ -15,6 +15,9 @@ from .base import AbstractEncoder
 
 log = logging.getLogger(__name__)
 
+# ESM-2 uses 1024 token positions; <cls> and <eos> occupy two of them.
+_ESM_MAX_RESIDUES = 1022
+
 # Lazy imports — torch and transformers are only needed when PLM is used
 _torch = None
 _AutoTokenizer = None
@@ -68,7 +71,10 @@ class ESMEncoder(AbstractEncoder):
     device : str or None
         'cuda', 'mps', 'cpu', or None (auto-detect).
     cache_dir : Path or None
-        Directory for embedding cache. If None, no caching.
+        Directory for the on-disk cache of raw mean-pooled embeddings (shared
+        by 'mean' and 'delta' modes since the underlying ESM-2 vectors are
+        mode-agnostic). If None, no file is written, but embeddings are still
+        cached in memory for the lifetime of this encoder instance.
     """
 
     def __init__(
@@ -260,6 +266,16 @@ class ESMEncoder(AbstractEncoder):
             D = 320 for esm2_t6_8M, 1280 for esm2_t33_650M, etc.
         """
         sequences = list(df["mutated_sequence"])
+
+        too_long = [s for s in sequences if len(s) > _ESM_MAX_RESIDUES]
+        if too_long:
+            raise ValueError(
+                f"{len(too_long)} sequence(s) exceed the ESM-2 limit of "
+                f"{_ESM_MAX_RESIDUES} residues "
+                f"(longest: {max(len(s) for s in too_long)}). "
+                "Truncation is disabled — shorten or filter sequences before embedding."
+            )
+
         keys = [self._seq_hash(seq) for seq in sequences]
 
         self._load_cache()
@@ -268,17 +284,26 @@ class ESMEncoder(AbstractEncoder):
         missing_indices = [i for i, k in enumerate(keys) if k not in self._embedding_cache]
 
         if missing_indices:
+            # Deduplicate so each unique sequence is embedded exactly once.
+            seen: dict[str, str] = {}  # hash → sequence, insertion-ordered
+            for i in missing_indices:
+                k = keys[i]
+                if k not in seen:
+                    seen[k] = sequences[i]
+            unique_keys = list(seen.keys())
+            unique_seqs = list(seen.values())
             log.info(
                 "Computing ESM-2 (%s) embeddings for %d new sequences.",
-                self.model_name, len(missing_indices),
+                self.model_name, len(unique_seqs),
             )
-            missing_seqs = [sequences[i] for i in missing_indices]
-            new_embs = self._embed_sequences(missing_seqs)
-            for i, emb in zip(missing_indices, new_embs):
-                self._embedding_cache[keys[i]] = emb
+            new_embs = self._embed_sequences(unique_seqs)
+            for k, emb in zip(unique_keys, new_embs):
+                self._embedding_cache[k] = emb
             self._save_cache()
 
         emb = np.stack([self._embedding_cache[k] for k in keys])
+        if self._hidden_size is None:
+            self._hidden_size = emb.shape[1]
 
         if self.mode == "mean":
             return emb
