@@ -137,17 +137,25 @@ not at construction time. This keeps initialization fast and allows
 BenchmarkConfig validation to proceed even if transformers is slow to import.
 
 ### Disk caching
-Embeddings are expensive to compute. ESMEncoder caches the full embedding
-matrix to disk as a .npy file after the first computation. On subsequent
-calls, it checks whether the cached variant_id order matches the current
-dataset and loads from disk if so.
+Embeddings are expensive to compute. ESMEncoder caches raw mean-pooled
+embeddings as a {sha256(sequence) -> embedding} dict, serialised to a
+single pickle file. The cache is shared between 'mean' and 'delta' modes
+because the underlying ESM-2 vectors are identical for both.
 
-Cache paths (managed by BenchmarkPaths):
-    data/embeddings/<dataset>/embeddings_<model>_<mode>.npy
-    data/embeddings/<dataset>/variant_ids_<model>_<mode>.npy
+Cache path:
+    data/embeddings/<dataset>/cache_<model>.pkl
 
-The variant_ids file stores the order of variants in the embedding matrix,
-so cache invalidation is automatic if the dataset order changes.
+On each transform() call the encoder:
+    1. Loads the cache from disk into memory (no-op on subsequent calls).
+    2. Looks up each requested sequence by its hash.
+    3. Embeds only the sequences that are missing from the cache.
+    4. Writes the updated cache atomically (tempfile + rename) if new
+       entries were added.
+
+This means subset calls — e.g. transform(labeled_df) and transform(pool_df)
+on each AL round — are served from the in-memory dict without re-running the
+model. When cache_dir=None no file is written, but the dict still lives in
+memory for the lifetime of the encoder instance.
 
 ### Device handling
 _best_device() checks for CUDA, then MPS (Apple Silicon), then falls back
