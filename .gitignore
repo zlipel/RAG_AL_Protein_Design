@@ -13,10 +13,12 @@ venv/
 env/
 
 # Large data / outputs (sync manually or via rsync)
-data/embeddings/
-data/*.csv
+data/
 results/
 logs/
+
+# PDFs and other large assets
+*.pdf
 
 # Jupyter
 .ipynb_checkpoints/
