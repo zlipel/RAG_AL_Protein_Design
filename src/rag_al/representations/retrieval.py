@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -81,10 +80,13 @@ class RetrievalAugmentedEncoder(AbstractEncoder):
         self._knn = NearestNeighbors(n_neighbors=k, metric="euclidean", n_jobs=-1)
         self._knn.fit(self._labeled_embeddings)
 
-        # Scale distances by median pairwise distance (robust normalization)
+        # Scale distances by median pairwise distance (self excluded to avoid
+        # the zero-distance column pulling the median toward 0).
         if len(self._labeled_embeddings) >= 2:
-            dists, _ = self._knn.kneighbors(self._labeled_embeddings)
-            self._dist_scale = max(float(np.median(dists)), 1e-8)
+            n_fetch = min(k + 1, len(self._labeled_embeddings))
+            dists, _ = self._knn.kneighbors(self._labeled_embeddings, n_neighbors=n_fetch)
+            scale_dists = dists[:, 1:] if n_fetch > k else dists
+            self._dist_scale = max(float(np.median(scale_dists)), 1e-8)
         else:
             self._dist_scale = 1.0
 
@@ -113,7 +115,24 @@ class RetrievalAugmentedEncoder(AbstractEncoder):
     # Retrieval feature computation
     # ------------------------------------------------------------------
 
-    def _retrieval_features(self, query_embeddings: np.ndarray) -> np.ndarray:
+    def transform_labeled(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Encode the labeled set, excluding each point from its own kNN query.
+
+        Overrides ``AbstractEncoder.transform_labeled()`` to prevent self-neighbor
+        contamination: when the labeled set queries the kNN index built from itself,
+        sklearn returns each point as its own nearest neighbor (distance = 0),
+        making retrieval features self-referential.
+        """
+        if self._knn is None or self._labeled_y is None:
+            raise RuntimeError("Call fit() before transform_labeled().")
+        plm_embeddings = self._esm.transform(df)
+        retrieval_feats = self._retrieval_features(plm_embeddings, exclude_self=True)
+        return np.hstack([plm_embeddings, retrieval_feats])
+
+    def _retrieval_features(
+        self, query_embeddings: np.ndarray, *, exclude_self: bool = False
+    ) -> np.ndarray:
         """
         For each query embedding, retrieve k labeled neighbors and compute
         summary statistics of their fitness values and distances.
@@ -122,6 +141,10 @@ class RetrievalAugmentedEncoder(AbstractEncoder):
         ----------
         query_embeddings : np.ndarray
             Shape (N, D).
+        exclude_self : bool
+            If True, fetch k+1 neighbors and discard column 0 (the self-match).
+            Use when querying the same points used to build the index.
+            Degrades gracefully when k == n_labeled (can't fetch k+1).
 
         Returns
         -------
@@ -129,7 +152,10 @@ class RetrievalAugmentedEncoder(AbstractEncoder):
             Shape (N, 5): [mean_y, std_y, d_min, d_mean, max_y].
         """
         k = min(self.n_neighbors, len(self._labeled_y))
-        dists, idxs = self._knn.kneighbors(query_embeddings, n_neighbors=k)
+        n_fetch = min(k + 1, len(self._labeled_y)) if exclude_self else k
+        dists, idxs = self._knn.kneighbors(query_embeddings, n_neighbors=n_fetch)
+        if exclude_self and n_fetch > k:
+            dists, idxs = dists[:, 1:], idxs[:, 1:]
         # dists: (N, k),  idxs: (N, k)
 
         neighbor_y = self._labeled_y[idxs]   # (N, k)

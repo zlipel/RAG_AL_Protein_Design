@@ -70,6 +70,11 @@ class BenchmarkPaths:
     def seed_results_csv(self) -> Path:
         return self.run_results_dir / f"seed_{self.seed}.csv"
 
+    @property
+    def seed_selections_csv(self) -> Path:
+        """Per-round selection log: which variants were acquired each round."""
+        return self.run_results_dir / f"seed_{self.seed}_selections.csv"
+
     # ------------------------------------------------------------------
     # Logs
     # ------------------------------------------------------------------

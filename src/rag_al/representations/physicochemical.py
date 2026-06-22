@@ -83,7 +83,6 @@ def _encode_one(sequence: str) -> np.ndarray:
         idx = _AA_INDEX.get(aa)
         if idx is not None:
             counts[idx] += 1.0
-        net_charge += _AA_HYDROPATHY.get(aa, 0.0) * 0.0  # placeholder replaced below
         # Charge from +1/-1 residues
         if aa in _POSITIVE:
             net_charge += 1.0

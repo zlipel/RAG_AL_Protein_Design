@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,7 @@ def run_al_loop(
     batch_size: int,
     seed: int = 0,
     log: Optional[logging.Logger] = None,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Run a pool-based retrospective active learning loop.
 
@@ -33,7 +33,7 @@ def run_al_loop(
       4. Predict (μ, σ) for all pool variants.
       5. Select a batch via the acquisition function.
       6. Reveal the selected variants' fitness labels.
-      7. Record metrics.
+      7. Record metrics and log selected variants.
 
     Leakage guarantees
     ------------------
@@ -65,11 +65,15 @@ def run_al_loop(
 
     Returns
     -------
-    pd.DataFrame
+    results : pd.DataFrame
         One row per round. Columns:
         round, n_labeled, best_fitness, simple_regret,
         topk10_recall, topk50_recall, batch_mean_fitness,
         batch_diversity, mean_dist_wt.
+    selections : pd.DataFrame
+        One row per selected variant per round. Columns:
+        round, global_index, variant_id, fitness.
+        Enables full post-hoc reconstruction of the acquisition sequence.
     """
     if log is None:
         log = logging.getLogger(__name__)
@@ -81,14 +85,21 @@ def run_al_loop(
     global_optimum = dataset.global_optimum
     top10_idx = dataset.top_k_global_indices(10)
     top50_idx = dataset.top_k_global_indices(50)
-    wt_sequence: str = dataset._df["wt_sequence"].iloc[0]
+    wt_sequence: str = dataset.wt_sequence
 
     rows: list[dict] = []
+    selection_rows: list[dict] = []
 
     log.info(
         "Starting AL loop: n_rounds=%d  batch_size=%d  n_init=%d  n_pool=%d",
         n_rounds, batch_size, dataset.n_labeled, dataset.n_pool,
     )
+
+    log.info("Initial labeled set: best fitness=%.4f  mean fitness=%.4f",
+             dataset.labeled_y.max(), dataset.labeled_y.mean())
+
+    log.info("Design choices: encoder=%s  surrogate=%s  acquisition=%s",
+             encoder.__class__.__name__, surrogate.__class__.__name__, acquisition.__class__.__name__)
 
     for round_idx in range(n_rounds):
         log.info("Round %d / %d  (labeled=%d, pool=%d)",
@@ -108,7 +119,7 @@ def run_al_loop(
             log.exception("Encoder fit failed at round %d: %s", round_idx, e)
             raise
 
-        X_labeled = encoder.transform(df_labeled)   # (n_lab, D)
+        X_labeled = encoder.transform_labeled(df_labeled)   # (n_lab, D)
 
         # ---- 2. Encode pool --------------------------------------------------
         df_pool = dataset.pool_df
@@ -143,17 +154,25 @@ def run_al_loop(
         )
 
         # ---- 6. Reveal -------------------------------------------------------
-        # Convert local → global to get batch sequences and fitness AFTER reveal
+        # Save global indices and sequences before reveal, then expose labels.
         global_selected = dataset.pool_indices[selected_local]
-        batch_sequences = list(
-            dataset._df.loc[global_selected, "mutated_sequence"]
-        )
+        batch_sequences = dataset.get_sequences(global_selected)
+        variant_ids = dataset.get_variant_ids(global_selected)
         dataset.reveal(selected_local)
 
         # Fitness of the newly revealed batch (allowed post-reveal)
-        batch_y = dataset.labeled_y[-len(selected_local):]
+        batch_y = dataset.fitness_at(global_selected)
 
-        # ---- 7. Metrics ------------------------------------------------------
+        # ---- 7. Log selections ----------------------------------------------
+        for gi, vid, fi in zip(global_selected, variant_ids, batch_y):
+            selection_rows.append({
+                "round": round_idx,
+                "global_index": int(gi),
+                "variant_id": vid,
+                "fitness": float(fi),
+            })
+
+        # ---- 8. Metrics ------------------------------------------------------
         row = compute_round_metrics(
             round_idx=round_idx,
             labeled_y=dataset.labeled_y,
@@ -172,5 +191,6 @@ def run_al_loop(
         )
 
     results = pd.DataFrame(rows)
+    selections = pd.DataFrame(selection_rows)
     log.info("AL loop complete. Final best fitness: %.4f", results["best_fitness"].max())
-    return results
+    return results, selections
