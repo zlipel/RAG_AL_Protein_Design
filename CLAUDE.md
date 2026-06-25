@@ -22,13 +22,14 @@ pytest
 pytest tests/test_runner_batch_y.py -v
 
 # Pre-compute ESM-2 embeddings (GPU; run once per dataset before benchmark)
-rag-embed --dataset BLAT_ECOLX --esm_model facebook/esm2_t6_8M_UR50D
+# Curated CSVs live in data/curated/ — data_dir defaults there
+rag-embed --dataset BLAT_ECOLX_Jacquier_2013 --esm_model facebook/esm2_t6_8M_UR50D
 
 # Run one benchmark cell interactively
-rag-benchmark --dataset BLAT_ECOLX --representation plm_mean --acquisition ucb --seed 0
+rag-benchmark --dataset BLAT_ECOLX_Jacquier_2013 --representation mutation --acquisition ucb --seed 0
 
 # Aggregate results and plot learning curves
-python scripts/plot_results.py --dataset BLAT_ECOLX --output_dir figures/
+python scripts/plot_results.py --dataset BLAT_ECOLX_Jacquier_2013 --output_dir figures/
 ```
 
 ---

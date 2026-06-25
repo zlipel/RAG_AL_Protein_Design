@@ -50,7 +50,7 @@ class BenchmarkConfig:
     acquisition: str
 
     # ---- Paths ----------------------------------------------------------
-    data_dir: Path = Path("data")
+    data_dir: Path = Path("data/curated")
     results_dir: Path = Path("results")
     log_dir: Path = Path("logs")
     embed_cache_dir: Path = Path("data/embeddings")

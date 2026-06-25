@@ -11,19 +11,24 @@
 
 # -----------------------------------------------------------------------
 # rag-embed: Pre-compute ESM-2 embeddings for one dataset (GPU job).
-# Run this ONCE before submitting the benchmark sweep.
+# Run this ONCE per dataset before submitting the benchmark sweep.
 #
-# Usage:
-#   sbatch scripts/submit_embed.sh
+# Usage (submit one job per PLM-compatible dataset):
+#   for D in BLAT_ECOLX_Jacquier_2013 BLAT_ECOLX_Deng_2012 \
+#             BLAT_ECOLX_Firnberg_2014 BLAT_ECOLX_Stiffler_2015 \
+#             PABP_YEAST_Melamed_2013; do
+#       sbatch scripts/submit_embed.sh $D
+#   done
 #
-# Adjust DATASET and ESM_MODEL below, then submit.
+# NOTE: BRCA1_HUMAN_Findlay_2018 (WT len 1863) exceeds the ESM-2 1022-residue
+# limit — skip it for embedding. Use mutation/physicochemical only for BRCA1.
 # -----------------------------------------------------------------------
 
 set -euo pipefail
 
-DATASET="BLAT_ECOLX"                          # dataset CSV stem in data/
-ESM_MODEL="facebook/esm2_t33_650M_UR50D"      # use 8M model for testing
-DATA_DIR="data"
+DATASET="${1:-BLAT_ECOLX_Jacquier_2013}"      # pass as positional arg
+ESM_MODEL="facebook/esm2_t33_650M_UR50D"      # use 8M for prototyping, 650M for cluster
+DATA_DIR="data/curated"
 EMBED_CACHE_DIR="data/embeddings"
 EMBED_BATCH_SIZE=64                            # increase for A100/H100
 
