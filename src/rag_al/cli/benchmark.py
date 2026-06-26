@@ -71,6 +71,7 @@ def _run(cfg, log):
     surrogate = RFSurrogate(
         n_estimators=cfg.n_estimators,
         random_state=cfg.seed,
+        n_jobs=cfg.rf_n_jobs,
     )
 
     # ---- Build acquisition --------------------------------------------------

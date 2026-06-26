@@ -26,8 +26,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset", required=True, type=str,
                         help="Dataset name (CSV stem in --data_dir)")
-    parser.add_argument("--data_dir", type=Path, default=Path("data"),
-                        help="Directory containing curated CSVs (default: data/)")
+    parser.add_argument("--data_dir", type=Path, default=Path("data/curated"),
+                        help="Directory containing curated CSVs (default: data/curated/)")
     parser.add_argument("--embed_cache_dir", type=Path,
                         default=Path("data/embeddings"),
                         help="Directory to write embedding caches (default: data/embeddings/)")

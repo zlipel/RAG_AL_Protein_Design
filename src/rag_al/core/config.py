@@ -63,6 +63,7 @@ class BenchmarkConfig:
 
     # ---- Surrogate ------------------------------------------------------
     n_estimators: int = 100  # RF trees
+    rf_n_jobs: int = 1       # cores per RF fit; set >1 only when running single-cell
 
     # ---- Acquisition hyperparameters ------------------------------------
     ucb_beta: float = 1.0           # UCB exploration weight β

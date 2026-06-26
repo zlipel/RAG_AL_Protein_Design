@@ -3,6 +3,75 @@
 
 ---
 
+## 2026-06-26 — PLM benchmark results: Deng 2012 & Firnberg 2014 analysis
+
+**Branch:** `audit/agent-scaffold`
+
+### Task summary
+Ran the full 5-repr × 5-acq × 3-seed benchmark grid (n_rounds=20, batch_size=128,
+n_init=50, ESM-2 8M, β=1.0) locally on Deng 2012 and Firnberg 2014.
+Jacquier 2013 results from the prior session were included in cross-dataset comparison.
+
+### Key findings
+
+**Deng 2012 (n=4996, fitness std=1.53) — PLM clearly wins**
+
+| repr | greedy | ucb_b1.0 | diversity_ucb | retrieval_ucb |
+|---|---|---|---|---|
+| mutation | 0% | 67% | 67% | 33% |
+| physicochemical | 67% | 67% | 0% | 33% |
+| plm_delta | **100%** | **100%** | **100%** | **100%** |
+| plm_mean | **100%** | **100%** | **100%** | **100%** |
+| plm_retrieval | 67% | **100%** | **100%** | **100%** |
+
+% seeds finding the global optimum (simple_regret = 0 at final round).
+PLM representations with any non-random acquisition find the global optimum in every seed.
+Speed: `plm_{delta,mean} + retrieval_ucb` reaches regret=0 in ~4 rounds on average;
+mutation greedy never finds it. Mean simple_regret: PLM=0.055, non-PLM=0.242.
+
+**Firnberg 2014 (n=4783, fitness std=0.45) — deceptive outlier pathology**
+
+Global optimum is F58N with fitness 2.9024 — isolated 1.1995 units above the next cluster
+(1.7029, shared by 8 variants). With budget=2610 labels (54.6% of all variants), every
+model-based method (greedy, UCB, diversity_ucb, retrieval_ucb) across all representations
+achieves simple_regret = 1.1995, meaning none ever selects F58N. The surrogate exploits
+the 1.7029 cluster (rich, well-supported region) and persistently underestimates F58N
+because it is a feature-space outlier. Random achieves regret ≈ 0.40 — it has ~42%
+probability of stumbling on F58N by chance given the budget.
+
+Diagnosis: this is a **deceptive local optimum** failure mode. AL with model-based
+acquisition is worse than random on this landscape. Mitigation strategies include
+ε-greedy exploration, Thompson sampling, or ensemble disagreement-based selection.
+
+**Jacquier 2013 (n=989, fitness std=1.95) — ordinal landscape, small n**
+
+Top-10% threshold = 0.0 (38% of variants qualify), making topk10_recall uninformative.
+Simple regret shows some methods find the optimum (mutation + diversity_ucb, plm_retrieval
++ diversity_ucb), but the dataset is too small and ordinal for reliable differentiation.
+PLM mean regret (0.19) is slightly worse than non-PLM (0.13), likely because ESM-2 8M
+features add noise for single-mutant antibiotic resistance on a dataset of only 989 variants.
+
+**Cross-dataset PLM vs non-PLM (mean simple_regret, final round):**
+
+| Dataset | non-PLM | PLM |
+|---|---|---|
+| Deng_2012 | 0.242 | 0.055 |
+| Firnberg_2014 | 1.040 | 0.906 |
+| Jacquier_2013 | 0.133 | 0.189 |
+
+PLM helps on Deng (large, continuous landscape), is uniformly ineffective on Firnberg
+(deceptive outlier, not a representation problem), and is neutral/slightly harmful on Jacquier.
+
+### Files changed
+- `environment.yml` — Python 3.12, added ipykernel/ipywidgets; torch/gpytorch/botorch as manual step
+- `scripts/setup_cluster.sh` — PyTorch 2.x + torchvision, CUDA 12.x (cu121 default)
+
+### Remaining datasets to run
+Stiffler 2015 (killed partway through), PABP_YEAST_Melamed_2013, BRCA1_HUMAN_Findlay_2018
+(non-PLM only, WT len=1863 > ESM-2 limit) — move to cluster.
+
+---
+
 ## 2026-06-17 — PLM cache: replace order-validated array cache with seq-hash dict
 
 **Branch:** `fix/plm-cache-hashmap`
@@ -140,5 +209,84 @@ Known mypy issues (documented, not blocking):
 - **Bug #3** — `RetrievalAugmentedEncoder` self-neighbor inclusion when `transform(labeled_df)` called. Not blocking correctness for non-retrieval representations but distorts surrogate calibration for `plm_retrieval`. Next fix.
 - **Bug #4** — Dead code in `physicochemical.py` (`* 0.0`). Minor; no correctness impact.
 - **ESMEncoder cache** — Cache key mismatch means embeddings are recomputed every round. Performance issue; not correctness.
+
+---
+
+## 2026-06-25 — Multi-dataset benchmark setup and local sweep
+
+### Task summary
+
+Set up the full 6-dataset benchmark panel and ran non-PLM + PLM experiments locally
+using the M3 MacBook (MPS GPU, 12 cores).
+
+### Files changed
+
+- `src/rag_al/core/config.py` — `data_dir` default changed to `data/curated/`; added
+  `rf_n_jobs: int = 1` field so parallel local runs don't oversubscribe cores
+- `src/rag_al/cli/benchmark.py` — pass `cfg.rf_n_jobs` to `RFSurrogate`
+- `src/rag_al/cli/embed.py` — `data_dir` default changed to `data/curated/`
+- `scripts/curate_proteingym.py` — new: converts ProteinGym substitution CSVs to
+  5-column pipeline schema via WT reconstruction from mutant strings
+- `scripts/run_local.py` — new: parallel local runner using `ThreadPoolExecutor`;
+  accepts `--dataset`, `--reprs`, `--acqs`, `--n_seeds`, `--n_rounds`,
+  `--batch_size`, `--ucb_beta`, `--esm_model`, `--workers`
+- `scripts/plot_aggregate.py` — new: cross-dataset heatmap (repr × acq),
+  difficulty-split bar chart, per-dataset grouped bar chart
+- `scripts/submit_benchmark.sh` — rewritten: one CPU job per dataset using
+  `run_local.py --workers 48` instead of 450-task SLURM array
+- `scripts/submit_embed.sh` — accepts dataset as positional arg; updated paths
+- `CLAUDE.md` — updated example commands to use full dataset names
+- `data/curated/` — curated all 6 datasets (989–37708 variants each)
+- `data/embeddings/` — ESM2-8M caches for 5 PLM-compatible datasets
+
+### Reason for change
+
+Pipeline previously had no real datasets or benchmark infrastructure. This adds
+the full experimental scaffold needed to evaluate AL methods across diverse fitness
+landscapes before cluster submission.
+
+### Key findings from local runs (non-PLM, n_rounds=20, batch_size=128)
+
+- AL signal is clear on PABP_YEAST and BLAT_ECOLX_Stiffler: UCB/greedy
+  batch_mean_fitness is consistently higher than random; best_fitness improves
+  monotonically; several acquisitions reach regret=0.000.
+- BLAT_ECOLX_Deng_2012 and Jacquier_2013 have very discrete fitness landscapes
+  (rational-fraction values, large neutral cluster at 0.0) — batch_mean_fitness
+  stays negative because most variants are deleterious; best_fitness still
+  improves meaningfully for non-random acquisitions.
+- β=0.1 tested on Deng: worse than β=1.0 (regret 0.327 vs 0.109). Late-round
+  batch quality decline is pool depletion, not excess exploration.
+- PLM (ESM2-8M, MPS): 45 cells for Jacquier in ~2 min wall time. PLM embeddings
+  do not help on discrete single-mutant landscapes; greedy + PLM is worse than
+  random (overconfident exploitation in embedding space).
+
+### Cluster deployment design
+
+- Embed: one GPU job per dataset (`submit_embed.sh $DATASET`)
+- Benchmark: one 48-core CPU job per dataset (`submit_benchmark.sh $DATASET`)
+  → 10 total SLURM jobs instead of 450 array tasks
+- PLM cells are cache-hit-only after embed; no GPU needed for benchmark step
+
+### Tests run
+
+```
+conda run -n torch-protein-M1 pytest tests/ -v
+```
+**Result: 24/24 passed**
+
+```
+ruff check src/
+```
+**Result: All checks passed**
+
+### Remaining concerns
+
+- BRCA1_HUMAN_Findlay_2018 (WT len 1863) excluded from PLM representations.
+  ESM-2 hard limit is 1022 residues. To include BRCA1 with PLM, would need
+  a long-context model (ESM-3) or sequence truncation.
+- PLM (ESM2-8M) results for larger datasets (Deng, Firnberg, Stiffler, PABP)
+  pending — running now.
+- All results are with ESM2-8M (320-dim). Cluster run should use 650M (1280-dim)
+  for higher-quality embeddings.
 
 ---

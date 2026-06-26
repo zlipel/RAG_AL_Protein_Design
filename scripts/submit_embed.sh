@@ -34,7 +34,7 @@ EMBED_BATCH_SIZE=64                            # increase for A100/H100
 
 # --- Environment setup (adjust to your cluster module/conda setup) -----
 module purge
-module load anaconda3/2023.3                   # or your Python module
+module load anaconda3/2024.6                   # or your Python module
 conda activate rag_al                          # your conda env name
 
 # Navigate to project root (assumes script submitted from project root)
