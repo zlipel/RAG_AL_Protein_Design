@@ -20,6 +20,13 @@
 
 set -euo pipefail
 
+# Always run from the project root, regardless of where this script is called from.
+# BASH_SOURCE[0] is the script file itself; its parent is scripts/, its grandparent is root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+echo "==> Project root: $PROJECT_ROOT"
+
 CUDA_TAG="cu121"   # adjust: cu118, cu121, cu124, etc.
 
 HOME_PROJECT="/home/zl4808/PROJECTS/rag_pipeline"
@@ -30,7 +37,7 @@ echo "==> Loading anaconda module"
 module load anaconda3/2024.6
 
 echo "==> Creating conda environment from environment.yml"
-conda env create -f environment.yml
+conda env create -f environment.yml          # relative to PROJECT_ROOT, now safe
 # If env already exists: conda env update -f environment.yml --prune
 
 # ---- 2. Activate and install PyTorch + torchvision (CUDA) ---------------
