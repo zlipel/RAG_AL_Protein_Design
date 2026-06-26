@@ -18,7 +18,7 @@
 #   3. Submit jobs with scripts/submit_embed.sh and scripts/submit_benchmark.sh
 #   4. rsync results back to local machine
 
-set -euo pipefail
+set -eo pipefail
 
 # Always run from the project root, regardless of where this script is called from.
 # BASH_SOURCE[0] is the script file itself; its parent is scripts/, its grandparent is root.
