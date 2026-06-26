@@ -6,235 +6,159 @@ Retrieval-Augmented Active Learning for Sparse Protein Sequence Optimization
 
 ## Purpose
 
-The purpose of this project is to test whether protein foundation-model representations and retrieval-augmented acquisition strategies improve active learning performance in sparse protein fitness landscapes compared with standard sequence descriptors and standard acquisition functions.
+This project benchmarks how well protein language model representations and
+retrieval-augmented acquisition strategies improve active learning data efficiency
+across sparse protein fitness landscapes. It uses retrospective deep mutational
+scanning (DMS) datasets as a controlled testbed and is designed to be extended
+toward emergent biophysical properties (Phase 2) and multi-objective optimization
+(Phase 3).
 
-The broader motivation is that biological design often occurs in low-data regimes where experimental measurements are expensive, labels are sparse, and candidate spaces are large. This project uses retrospective deep mutational scanning datasets as a controlled benchmark for studying these decision-making strategies.
+A secondary goal is **breadth of model coverage**: evaluating as many openly
+accessible protein LMs as possible (ESM-2 at multiple scales, ProtT5, Ankh, CARP,
+ESM-C, and eventually closed-model APIs) both to generate rigorous comparative
+results and to serve as a concrete artifact for industry outreach.
 
 ## Scientific Question
 
-In sparse protein fitness landscapes, do foundation-model embeddings and retrieval-augmented acquisition improve active learning compared with standard sequence descriptors and standard Bayesian optimization / active learning strategies?
+In sparse protein fitness landscapes, do foundation-model embeddings and
+retrieval-augmented acquisition improve active learning data efficiency relative to
+standard sequence descriptors and standard acquisition functions? And to what extent
+does the answer depend on model scale, architecture, and the structure of the
+landscape?
 
 ## Task Definition
 
-Given a deep mutational scanning dataset
+Given a DMS dataset $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^{N}$ where $x_i$ is a
+protein variant and $y_i = f(x_i)$ is its measured fitness, we simulate pool-based
+active learning:
 
-\[
-\mathcal{D} = \{(x_i, y_i)\}_{i=1}^{N}
-\]
+1. Hide all but $n_{\text{init}}$ labels.
+2. Each round: fit surrogate on labeled set → score unlabeled pool → acquire a batch
+   → reveal labels → update.
+3. Repeat for $T$ rounds.
 
-where \(x_i\) is a protein variant sequence and \(y_i = f(x_i)\) is its measured fitness or variant-effect score, we simulate an active learning process.
+No de novo generation; candidate selection is from a fixed pool of experimentally
+measured variants.
 
-At the beginning of each run, only a small subset of labels is revealed. The remaining labels are hidden and treated as an unlabeled candidate pool. At each active learning round, the algorithm selects a batch of variants to acquire. The hidden labels for those variants are then revealed, the surrogate model is updated, and the process repeats.
+---
 
-The goal is to discover high-fitness variants using as few label acquisitions as possible.
+## Experimental Axes
 
-## Objective
+### Representations
 
-For the initial single-objective setting, the biological objective is
+| Tier | Name | Dims | Notes |
+|------|------|------|-------|
+| Baseline | Mutation descriptors | 49 | Position, AA change, Δphysicochemical |
+| Baseline | Physicochemical | 29 | Composition, charge, hydropathy, entropy |
+| PLM | ESM-2 8M | 320 | HuggingFace; local / CPU |
+| PLM | ESM-2 150M | 640 | Scale sweep |
+| PLM | ESM-2 650M | 1280 | Cluster default |
+| PLM | ProtT5-XL | 1024 | `Rostlab/prot_t5_xl_uniref50`; T5Encoder |
+| PLM | Ankh-base / large | 768/1536 | `ElnaggarLab/ankh-base`; longer context |
+| PLM | CARP | varies | Microsoft `sequence-models` CNN; no MSA |
+| PLM | ESM-C / ESM3-open | varies | EvolutionaryScale; gated license |
+| Concat | PLM + physicochemical | D+29 | Concatenation of frozen PLM + physico |
+| Retrieval | PLM + retrieval context | D+5 | kNN label features appended to PLM mean |
 
-\[
-\max_x f(x)
-\]
+ESM-2 size sweep (8M / 150M / 650M) is config-only — no code change.
+ProtT5 requires space-separated uppercase AA preprocessing.
+CARP requires the `sequence-models` pip package (separate install).
+ESM-C requires the EvolutionaryScale `esm` package (gated license — good outreach hook).
 
-where \(f(x)\) is the experimentally measured DMS fitness score.
+### Surrogates
 
-In the retrospective benchmark, the primary performance metric is the best observed score after a fixed acquisition budget:
+| Name | Uncertainty | Scales to | Notes |
+|------|-------------|-----------|-------|
+| Random Forest (current) | Ensemble σ | ~10K labeled | Fast; baseline |
+| Gaussian Process | Posterior σ | ~2K exact; larger with approx | Use gpytorch; approximate inference preferred (sparse GP / SGPR / inducing points); avoid exact matrix inversion for large n_labeled |
+| NN ensemble | Ensemble σ | Any | Optional Optuna per-round architecture search; user has existing code |
 
-\[
-\max_{x \in L_T} f(x)
-\]
+GP implementation should use approximate inference (e.g., `gpytorch.models.ApproximateGP`
+with inducing points) rather than exact MLL inversion to scale to n_labeled > 1K.
 
-where \(L_T\) is the labeled/acquired set after \(T\) active learning rounds.
+### Acquisition Functions
 
-## Surrogate Model
+| Name | Score |
+|------|-------|
+| Random | Uniform |
+| Greedy | $\mu(x)$ |
+| UCB | $\mu(x) + \beta \sigma(x)$ |
+| Diversity-UCB | UCB − γ · diversity penalty |
+| Retrieval-UCB | UCB + λ · R(x); R from labeled kNN |
+| Expected Improvement *(planned)* | $\mathbb{E}[\max(f(x)-f_{\text{best}}, 0)]$ |
 
-At each round \(t\), a surrogate model is trained on the currently labeled set \(L_t\). The surrogate predicts
+### Datasets (Sprint 1 — ProteinGym)
 
-\[
-\mu_t(x), \sigma_t(x)
-\]
+| Dataset | N | Protein | Notes |
+|---------|---|---------|-------|
+| BLAT_ECOLX_Jacquier_2013 | 989 | β-lactamase | Small, ordinal |
+| BLAT_ECOLX_Deng_2012 | 4996 | β-lactamase | Continuous, PLM wins strongly |
+| BLAT_ECOLX_Firnberg_2014 | 4783 | β-lactamase | Deceptive outlier (F58N); adversarial for model-based acq |
+| BLAT_ECOLX_Stiffler_2015 | 4996 | β-lactamase | Similar to Deng |
+| PABP_YEAST_Melamed_2013 | 37708 | RNA-binding | Large; PLM TBD |
+| BRCA1_HUMAN_Findlay_2018 | 1837 | Tumor suppressor | WT len 1863 > ESM-2 limit; no PLM |
 
-for each candidate \(x\) in the unlabeled pool \(U_t\), where \(\mu_t(x)\) is the predicted fitness and \(\sigma_t(x)\) represents model uncertainty.
+### Datasets (Phase 2 — Biophysical / Proprietary)
 
-Possible surrogate models include:
+- Lindorff-Larsen IDRome (public; Rg, diffusivity from CALVADOS)
+- User's simulation data: ~600 seq × diffusivity/density/expenditure density + 2034-seq Rg/B2 set
 
-- random forest ensembles
-- neural network ensembles
-- Gaussian process regression
-- other uncertainty-aware predictors
+---
 
-## Acquisition Functions
+## Metrics
 
-The acquisition function determines which unlabeled candidates are selected next. Candidate acquisition functions include:
+| Metric | Description |
+|--------|-------------|
+| `best_fitness` | $\max_{x \in L_t} f(x)$ — best found vs. round |
+| `simple_regret` | $f(x^*) - \max_{x \in L_t} f(x)$ |
+| `topk_recall` | $|L_t \cap \text{Top-}K| / K$ at k=10%, 50% |
+| `batch_mean_fitness` | Mean fitness of the current acquisition batch |
+| `batch_diversity` | Mean pairwise Hamming in batch |
+| `pool_spearman` *(planned)* | Spearman ρ between surrogate $\mu$ and true pool fitness — measures surrogate calibration each round; oracle metric, not used for acquisition |
 
-### Greedy exploitation
-
-\[
-a_t(x) = \mu_t(x)
-\]
-
-### Uncertainty sampling
-
-\[
-a_t(x) = \sigma_t(x)
-\]
-
-### Upper confidence bound
-
-\[
-a_t(x) = \mu_t(x) + \beta \sigma_t(x)
-\]
-
-### Expected improvement
-
-\[
-a_t(x) = \mathbb{E}[\max(f(x) - f_{\mathrm{best}}, 0)]
-\]
-
-### Retrieval-augmented acquisition
-
-Retrieval-augmented acquisition incorporates information from nearby currently labeled variants:
-
-\[
-a_t(x) = \mu_t(x) + \beta \sigma_t(x) + \lambda R_t(x)
-\]
-
-where \(R_t(x)\) is a retrieval-derived score computed only from the currently labeled set.
-
-Possible retrieval features include:
-
-\[
-R_t(x) =
-\left[
-\overline{y}_{kNN},
-\mathrm{std}(y_{kNN}),
-d_{\min},
-d_{\mathrm{mean}},
-\max(y_{kNN})
-\right]
-\]
-
-where the nearest neighbors are retrieved from the currently labeled set only.
-
-## Representations to Compare
-
-The project will compare several sequence representations:
-
-1. Mutation descriptors  
-   - mutation count
-   - mutation position
-   - wild-type residue
-   - mutant residue
-   - physicochemical change upon mutation
-
-2. Physicochemical sequence descriptors  
-   - amino acid composition
-   - net charge
-   - hydropathy
-   - aromatic fraction
-   - polar/charged residue fractions
-   - sequence length
-
-3. Protein language model embeddings  
-   - mean pooled embeddings
-   - mutation-site embeddings
-   - mutant-minus-wild-type delta embeddings
-
-4. Retrieval-augmented representations  
-   - protein language model embeddings plus nearest-neighbor label/context features
-
-## Initial Benchmark Setting
-
-The initial benchmark will use ProteinGym deep mutational scanning substitution datasets.
-
-The first version will use pool-based retrospective active learning:
-
-1. Load one DMS landscape.
-2. Hide most labels.
-3. Initialize with a small labeled subset.
-4. Train a surrogate model.
-5. Score the unlabeled pool with an acquisition function.
-6. Select a batch of variants.
-7. Reveal their labels.
-8. Update the labeled set.
-9. Repeat for a fixed number of rounds.
-
-No de novo sequence generation is required in the initial benchmark. Candidate selection occurs from a fixed pool of experimentally measured variants.
-
-## Primary Metrics
-
-The primary metrics are:
-
-1. Best observed fitness versus acquisition round
-
-\[
-\max_{x \in L_t} f(x)
-\]
-
-2. Simple regret
-
-\[
-f(x^*) - \max_{x \in L_t} f(x)
-\]
-
-where \(x^*\) is the best variant in the full dataset.
-
-3. Top-k recall
-
-\[
-\frac{|L_t \cap \mathrm{TopK}(\mathcal{D})|}{K}
-\]
-
-4. Mean fitness of acquired batch
-
-5. Diversity among selected variants
-
-6. Distance from wild-type sequence
+---
 
 ## Leakage Rules
 
-The active learning loop must obey strict leakage rules.
+These rules are invariants enforced throughout the codebase. See `docs/bugs.md`
+for the audit history.
 
-1. The surrogate model can only train on labels from the currently labeled set.
-2. Acquisition functions cannot access hidden labels in the unlabeled pool.
-3. Retrieval features that use labels can only retrieve from the currently labeled set.
-4. Embedding computation must not use fitness labels.
-5. The full label array can only be accessed by the reveal function and evaluation metrics.
-6. Any feature normalization that depends on labels must be fit only on the labeled set.
+1. Surrogate trains only on the currently labeled set.
+2. Acquisition functions receive only $(\mu, \sigma, X_{\text{labeled}}, y_{\text{labeled}})$ — no pool fitness.
+3. Retrieval features use labeled neighbors only.
+4. Embedding computation ignores fitness labels.
+5. `reveal()` is the only authorized hidden-label exposure path during the loop.
+6. `global_optimum` and `top_k_global_indices()` are metric-only oracle quantities.
+7. Feature normalization fit on labeled set only.
 
-## Initial Methods to Compare
+---
 
-The first benchmark should compare:
+## Sprint Roadmap
 
-1. Random acquisition
-2. Greedy acquisition using predicted mean
-3. Uncertainty sampling
-4. UCB acquisition
-5. Diversity-penalized UCB
-6. Retrieval-augmented UCB
+### Sprint 1 (complete)
+- Core AL loop, leakage discipline, schema validation
+- 5 representations: mutation, physicochemical, plm_mean, plm_delta, plm_retrieval
+- 5 acquisitions: random, greedy, UCB, diversity-UCB, retrieval-UCB
+- RF surrogate; ESM-2 hash-based embedding cache
+- 6-dataset ProteinGym benchmark on cluster (ESM-2 650M)
+- Cluster deployment: SLURM scripts, GNU parallel, environment.yml
 
-Across representations:
+### Sprint 2 (next)
+- `pool_spearman` per-round metric (runner + metrics)
+- `PLMPhysicoEncoder` — pLM + physicochemical concat representation
+- `GPSurrogate` — approximate GP via gpytorch (sparse/inducing-point preferred)
+- `HFPLMEncoder` — generalized HuggingFace backend (ProtT5, Ankh)
+- `CARPEncoder` — Microsoft sequence-models CNN adapter
+- ESM-2 size sweep cluster runs (8M / 150M / 650M comparison)
 
-1. Mutation descriptors
-2. Physicochemical descriptors
-3. Mean pooled protein language model embeddings
-4. Delta protein language model embeddings
-5. Protein language model embeddings plus retrieval features
+### Phase 2 (mid-July → mid-Aug)
+- Ingest simulation data + IDRome into `ALDataset` (multi-property columns)
+- Multi-objective acquisition (hypervolume, MOBO)
+- CV learning-curve harness for small datasets
+- ALBATROSS-style BiLSTM baseline
 
-## Near-Term Milestone
-
-The first milestone is a working retrospective active learning benchmark on one ProteinGym DMS landscape comparing:
-
-- mutation descriptors
-- physicochemical descriptors
-- protein language model embeddings
-- retrieval-augmented protein language model embeddings
-
-under:
-
-- random acquisition
-- greedy acquisition
-- UCB acquisition
-- retrieval-augmented UCB
-
-The first result should be a learning-curve plot showing best observed fitness versus active learning round.
+### Phase 3 (Aug → Sep)
+- pLM + IDP physics descriptor concat (κ, SCD, SHD via localCIDER/SPARROW)
+- pLM + structure features (AlphaFold, folded ProteinGym only — not IDPs)
+- pLM + text/function embeddings (UniProt annotations; stretch)
+- LoRA fine-tuning (conditional on Phase 2 showing headroom)
