@@ -69,6 +69,11 @@ DATA_DIR="${PROJECT_ROOT}/data/curated"
 EMBED_CACHE_DIR="${PROJECT_ROOT}/data/embeddings"
 RESULTS_DIR="${PROJECT_ROOT}/results"
 
+# Point HF at scratch (avoids home quota). Models must be pre-downloaded via
+# scripts/download_models.sh from the login node.
+export HF_HOME="/scratch/gpfs/${USER}/.cache/huggingface/"
+export HF_HUB_OFFLINE=1
+
 echo "============================================"
 echo "Job: $SLURM_JOB_ID   Node: $SLURMD_NODENAME"
 echo "Dataset: $DATASET"
