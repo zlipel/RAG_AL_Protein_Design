@@ -13,39 +13,32 @@
 
 set -eo pipefail
 
-# Mirror the HF_HOME that submit scripts will use at job time.
-# Edit this if your scratch path differs.
-export HF_HOME="/scratch/gpfs/${USER}/.cache/huggingface/"
-
-echo "HF_HOME set to: $HF_HOME"
-mkdir -p "$HF_HOME"
-
 # Activate the conda environment
 module load anaconda3/2024.6
 conda activate rag_al
 
+# Storage note: ESM-2 650M ~ 2.5 GB. Home has ~27 GB free which is sufficient
+# for Sprint 1. If you later add ProtT5 (~3 GB) + Ankh (~0.5 GB) for Sprint 2,
+# reassess. To redirect to scratch instead:
+#   export HF_HOME=/scratch/gpfs/$USER/.cache/huggingface/
+# or add that line to ~/.bashrc before running this script.
+
+echo "HF cache will land in: $(python -c 'from transformers.utils.hub import hf_cache_home; print(hf_cache_home)')"
+
 python - << 'EOF'
-import os
 from transformers import AutoTokenizer, AutoModel
-from transformers.utils.hub import hf_cache_home
 
-if "/scratch" not in hf_cache_home:
-    raise EnvironmentError(
-        f"HF cache is at '{hf_cache_home}' — not on scratch. "
-        "Set HF_HOME=/scratch/gpfs/$USER/.cache/huggingface/ before running."
-    )
-
+# Sprint 1: only 650M needed on cluster.
+# Add esm2_t30_150M_UR50D and esm2_t6_8M_UR50D when running the size sweep.
 MODELS = [
-    "facebook/esm2_t6_8M_UR50D",      # 8M  — prototyping / local
-    "facebook/esm2_t30_150M_UR50D",   # 150M — scale sweep
-    "facebook/esm2_t33_650M_UR50D",   # 650M — cluster default
+    "facebook/esm2_t33_650M_UR50D",   # ~2.5 GB
 ]
 
 for model_id in MODELS:
     print(f"\n==> Downloading {model_id} ...")
     AutoTokenizer.from_pretrained(model_id)
     AutoModel.from_pretrained(model_id)
-    print(f"    Cached to {os.environ['HF_HOME']}")
+    print(f"    Done.")
 
-print("\nAll models downloaded. Jobs can now run with HF_HUB_OFFLINE=1.")
+print("\nDownload complete. Jobs can now run with HF_HUB_OFFLINE=1.")
 EOF

@@ -47,10 +47,10 @@ PROJECT_ROOT="$(pwd)"
 DATA_DIR="${PROJECT_ROOT}/data/curated"
 EMBED_CACHE_DIR="${PROJECT_ROOT}/data/embeddings"
 
-# Point HF at scratch to avoid home-directory quota issues.
-# Model weights must be pre-downloaded; run scripts/download_models.sh from
-# the login node first.
-export HF_HOME="/scratch/gpfs/${USER}/.cache/huggingface/"
+# Use cached model weights only — compute nodes have no outbound internet.
+# Run scripts/download_models.sh from the login node first.
+# HF_HOME defaults to ~/.cache/huggingface/ (home has ~27 GB free, sufficient
+# for 650M model). Override by setting HF_HOME in ~/.bashrc if needed.
 export HF_HUB_OFFLINE=1
 
 echo "============================================"
