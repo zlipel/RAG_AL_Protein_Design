@@ -55,13 +55,26 @@ module purge
 module load anaconda3/2024.6
 conda activate rag_al
 
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+# SLURM_SUBMIT_DIR is set by sbatch to wherever the user ran sbatch from.
+# Always submit from the project root: cd /home/.../rag_pipeline && sbatch scripts/submit_benchmark.sh
+if [[ -z "${SLURM_SUBMIT_DIR:-}" ]]; then
+    echo "ERROR: SLURM_SUBMIT_DIR is not set. Submit with sbatch from the project root." >&2
+    exit 1
+fi
+cd "$SLURM_SUBMIT_DIR"
+PROJECT_ROOT="$(pwd)"
+
+# Absolute paths — safe regardless of subprocess cwd
+DATA_DIR="${PROJECT_ROOT}/data/curated"
+EMBED_CACHE_DIR="${PROJECT_ROOT}/data/embeddings"
+RESULTS_DIR="${PROJECT_ROOT}/results"
 
 echo "============================================"
 echo "Job: $SLURM_JOB_ID   Node: $SLURMD_NODENAME"
 echo "Dataset: $DATASET"
 echo "Reprs: ${REPRS[*]}   Acqs: ${ACQS[*]}"
 echo "n_rounds=$N_ROUNDS  batch_size=$BATCH_SIZE  n_seeds=$N_SEEDS  workers=$WORKERS"
+echo "Project root: $PROJECT_ROOT"
 echo "============================================"
 
 # Build the full command list (one line per cell)
@@ -79,7 +92,10 @@ for repr in "${REPRS[@]}"; do
 --n_init $N_INIT \
 --ucb_beta $UCB_BETA \
 --esm_model $ESM_MODEL \
---rf_n_jobs 1")
+--rf_n_jobs 1 \
+--data_dir ${DATA_DIR} \
+--embed_cache_dir ${EMBED_CACHE_DIR} \
+--results_dir ${RESULTS_DIR}")
         done
     done
 done
