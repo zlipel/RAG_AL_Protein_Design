@@ -23,7 +23,7 @@ conda activate rag_al
 #   export HF_HOME=/scratch/gpfs/$USER/.cache/huggingface/
 # or add that line to ~/.bashrc before running this script.
 
-echo "HF cache will land in: $(python -c 'from transformers.utils.hub import hf_cache_home; print(hf_cache_home)')"
+echo "HF cache will land in: ${HF_HOME:-~/.cache/huggingface/}"
 
 python - << 'EOF'
 from transformers import AutoTokenizer, AutoModel
