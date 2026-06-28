@@ -24,7 +24,7 @@
 # limit — skip it for embedding. Use mutation/physicochemical only for BRCA1.
 # -----------------------------------------------------------------------
 
-set -euo pipefail
+set -eo pipefail
 
 DATASET="${1:-BLAT_ECOLX_Jacquier_2013}"      # pass as positional arg
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"      # use 8M for prototyping, 650M for cluster

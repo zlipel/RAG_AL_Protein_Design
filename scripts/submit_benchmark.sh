@@ -31,7 +31,7 @@
 #   done
 # -----------------------------------------------------------------------
 
-set -euo pipefail
+set -eo pipefail
 
 DATASET="${1:-BLAT_ECOLX_Jacquier_2013}"
 N_ROUNDS=20
