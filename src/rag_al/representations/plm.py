@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import pickle
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -44,37 +45,52 @@ def _best_device() -> str:
     return "cpu"
 
 
+def _parse_mutant_positions(mutant_str: str) -> list[int]:
+    """Parse a mutant string into 0-indexed sequence positions.
+
+    'A23V'       → [22]
+    'A23V:G45L'  → [22, 44]
+    """
+    return [int(re.search(r"\d+", m).group()) - 1 for m in mutant_str.split(":")]
+
+
 class ESMEncoder(AbstractEncoder):
     """
     Protein language model encoder using ESM-2 (via HuggingFace transformers).
 
-    Three embedding modes
-    ---------------------
-    'mean'   Mean pool of all residue hidden states. Shape: (N, D).
-    'delta'  Mean pool(mutant) − mean pool(WT). Shape: (N, D).
+    Embedding modes
+    ---------------
+    'mean'   Mean pool of all residue hidden states (CLS/EOS excluded).
+             Shape: (N, D).
+    'delta'  mean_pool(mutant) − mean_pool(WT). Shape: (N, D).
              Captures the representation shift induced by mutations.
-    'site'   Not yet implemented; falls back to 'mean'.
+    'site'   Average of hidden states at mutated residue positions only.
+             Shape: (N, D). Requires a 'mutant' column in the DataFrame
+             (e.g. 'A23V' or 'A23V:G45L'). Designed for single-site
+             datasets; for multi-site, averaging may dilute signal —
+             consider 'delta' as an alternative.
 
-    Embeddings are cached to disk as a {seq_hash → embedding} pickle dict.
-    Subsequent calls look up existing hashes and only embed missing sequences,
-    so subset calls (e.g. labeled/pool splits in the AL loop) are served from
-    cache without re-running the model.
+    Caching
+    -------
+    Mean-pool embeddings are cached to disk as a {seq_hash → embedding}
+    pickle dict at cache_dir/cache_{model}.pkl. 'delta' reuses this cache.
+    Site embeddings use a separate cache at cache_dir/cache_{model}_site.pkl,
+    keyed by hash(seq + "::" + mutant_str), since the extracted vector
+    depends on which positions are mutated.
 
     Parameters
     ----------
     model_name : str
         HuggingFace model identifier, e.g. 'facebook/esm2_t6_8M_UR50D'.
     mode : str
-        One of 'mean', 'delta'.
+        One of 'mean', 'delta', 'site'.
     embed_batch_size : int
         Number of sequences per forward pass.
     device : str or None
         'cuda', 'mps', 'cpu', or None (auto-detect).
     cache_dir : Path or None
-        Directory for the on-disk cache of raw mean-pooled embeddings (shared
-        by 'mean' and 'delta' modes since the underlying ESM-2 vectors are
-        mode-agnostic). If None, no file is written, but embeddings are still
-        cached in memory for the lifetime of this encoder instance.
+        Directory for on-disk embedding caches. If None, embeddings are
+        cached in memory only for the lifetime of this encoder instance.
     """
 
     def __init__(
@@ -85,8 +101,8 @@ class ESMEncoder(AbstractEncoder):
         device: Optional[str] = None,
         cache_dir: Optional[Path] = None,
     ) -> None:
-        if mode not in ("mean", "delta"):
-            raise ValueError(f"mode must be 'mean' or 'delta', got {mode!r}")
+        if mode not in ("mean", "delta", "site"):
+            raise ValueError(f"mode must be 'mean', 'delta', or 'site', got {mode!r}")
 
         self.model_name = model_name
         self.mode = mode
@@ -98,8 +114,12 @@ class ESMEncoder(AbstractEncoder):
         self._wt_embedding: Optional[np.ndarray] = None   # shape (D,)
         self._hidden_size: Optional[int] = None
 
-        # None = not yet loaded from disk; {} = loaded but empty
+        # Mean-pool cache: seq_hash → (D,) embedding. Shared by mean + delta.
         self._embedding_cache: Optional[dict[str, np.ndarray]] = None
+
+        # Site cache: site_key → (D,) embedding. Separate because the vector
+        # depends on both the sequence and the mutation positions.
+        self._site_cache: Optional[dict[str, np.ndarray]] = None
 
         # Model/tokenizer loaded lazily on first use
         self._tokenizer = None
@@ -117,7 +137,7 @@ class ESMEncoder(AbstractEncoder):
         log.info("ESM-2 loaded on device: %s", self.device)
 
     # ------------------------------------------------------------------
-    # Cache helpers
+    # Cache helpers — mean-pool cache
     # ------------------------------------------------------------------
 
     def _cache_path(self) -> Optional[Path]:
@@ -138,10 +158,7 @@ class ESMEncoder(AbstractEncoder):
             with open(cp, "rb") as f:
                 loaded: dict[str, np.ndarray] = pickle.load(f)
             self._embedding_cache = loaded
-            log.info(
-                "Loaded embedding cache (%d entries) from %s",
-                len(loaded), cp,
-            )
+            log.info("Loaded embedding cache (%d entries) from %s", len(loaded), cp)
         else:
             self._embedding_cache = {}
 
@@ -160,24 +177,56 @@ class ESMEncoder(AbstractEncoder):
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
-        log.info(
-            "Saved embedding cache (%d entries) to %s",
-            len(self._embedding_cache), cp,
-        )
+        log.info("Saved embedding cache (%d entries) to %s", len(self._embedding_cache), cp)
+
+    # ------------------------------------------------------------------
+    # Cache helpers — site cache
+    # ------------------------------------------------------------------
+
+    def _site_cache_path(self) -> Optional[Path]:
+        if self.cache_dir is None:
+            return None
+        safe = self.model_name.replace("/", "__")
+        return self.cache_dir / f"cache_{safe}_site.pkl"
+
+    def _site_key(self, seq: str, mutant_str: str) -> str:
+        return hashlib.sha256((seq + "::" + mutant_str).encode()).hexdigest()
+
+    def _load_site_cache(self) -> None:
+        if self._site_cache is not None:
+            return
+        cp = self._site_cache_path()
+        if cp is not None and cp.exists():
+            with open(cp, "rb") as f:
+                loaded: dict[str, np.ndarray] = pickle.load(f)
+            self._site_cache = loaded
+            log.info("Loaded site embedding cache (%d entries) from %s", len(loaded), cp)
+        else:
+            self._site_cache = {}
+
+    def _save_site_cache(self) -> None:
+        cp = self._site_cache_path()
+        if cp is None:
+            return
+        assert self._site_cache is not None
+        cp.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_str = tempfile.mkstemp(dir=cp.parent, suffix=".tmp")
+        tmp = Path(tmp_str)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(self._site_cache, f)
+            tmp.replace(cp)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+        log.info("Saved site embedding cache (%d entries) to %s", len(self._site_cache), cp)
 
     # ------------------------------------------------------------------
     # Core embedding computation
     # ------------------------------------------------------------------
 
     def _embed_sequences(self, sequences: list[str]) -> np.ndarray:
-        """
-        Compute mean-pooled ESM-2 embeddings for a list of sequences.
-
-        Returns
-        -------
-        np.ndarray
-            Shape (N, D), float64.
-        """
+        """Mean-pooled ESM-2 embeddings. Returns (N, D) float64."""
         self._load_model()
         _lazy_imports()
 
@@ -199,7 +248,7 @@ class ESMEncoder(AbstractEncoder):
             with _torch.no_grad():
                 outputs = self._model(**inputs)
 
-            # outputs.last_hidden_state: (batch, seq_len+2, D)
+            # outputs.last_hidden_state: (B, L+2, D)
             # tokens 0 and -1 are <cls>/<eos> — mask them out
             hidden = outputs.last_hidden_state  # (B, L+2, D)
             attention_mask = inputs["attention_mask"]  # (B, L+2)
@@ -213,6 +262,54 @@ class ESMEncoder(AbstractEncoder):
             count = mask_expanded.sum(dim=1).clamp(min=1.0)   # (B, 1)
             mean_hidden = (sum_hidden / count).cpu().numpy()    # (B, D)
             all_embeddings.append(mean_hidden)
+
+        result = np.vstack(all_embeddings).astype(np.float64)
+        if self._hidden_size is None:
+            self._hidden_size = result.shape[1]
+        return result
+
+    def _embed_sequences_site(
+        self, sequences: list[str], mutant_strs: list[str]
+    ) -> np.ndarray:
+        """
+        Site-averaged ESM-2 embeddings. Returns (N, D) float64.
+
+        For each variant, extracts the hidden state at each mutated residue
+        position and averages across sites. Token index = sequence position + 1
+        because ESM-2 prepends a <cls> token.
+        """
+        self._load_model()
+        _lazy_imports()
+
+        all_embeddings: list[np.ndarray] = []
+        n = len(sequences)
+        bs = self.embed_batch_size
+
+        for start in range(0, n, bs):
+            batch_seqs = sequences[start : start + bs]
+            batch_muts = mutant_strs[start : start + bs]
+
+            inputs = self._tokenizer(
+                batch_seqs,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=1024,
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            with _torch.no_grad():
+                outputs = self._model(**inputs)
+
+            # (B, L+2, D) — keep on CPU as numpy for per-variant indexing
+            hidden = outputs.last_hidden_state.cpu().numpy()
+
+            for i, mutant_str in enumerate(batch_muts):
+                positions = _parse_mutant_positions(mutant_str)
+                # +1 because <cls> occupies token index 0
+                token_idxs = [p + 1 for p in positions]
+                site_embs = hidden[i, token_idxs, :]   # (n_sites, D)
+                all_embeddings.append(site_embs.mean(axis=0))  # (D,)
 
         result = np.vstack(all_embeddings).astype(np.float64)
         if self._hidden_size is None:
@@ -257,7 +354,8 @@ class ESMEncoder(AbstractEncoder):
         Parameters
         ----------
         df : pd.DataFrame
-            Must contain 'mutated_sequence'.
+            Must contain 'mutated_sequence'. For mode='site', must also
+            contain 'mutant' (e.g. 'A23V' or 'A23V:G45L').
 
         Returns
         -------
@@ -276,6 +374,10 @@ class ESMEncoder(AbstractEncoder):
                 "Truncation is disabled — shorten or filter sequences before embedding."
             )
 
+        if self.mode == "site":
+            return self._transform_site(sequences, df)
+
+        # ---- mean / delta path ------------------------------------------
         keys = [self._seq_hash(seq) for seq in sequences]
 
         self._load_cache()
@@ -284,8 +386,7 @@ class ESMEncoder(AbstractEncoder):
         missing_indices = [i for i, k in enumerate(keys) if k not in self._embedding_cache]
 
         if missing_indices:
-            # Deduplicate so each unique sequence is embedded exactly once.
-            seen: dict[str, str] = {}  # hash → sequence, insertion-ordered
+            seen: dict[str, str] = {}
             for i in missing_indices:
                 k = keys[i]
                 if k not in seen:
@@ -315,6 +416,46 @@ class ESMEncoder(AbstractEncoder):
             return emb - self._wt_embedding[np.newaxis, :]
         else:
             raise ValueError(f"Unknown mode: {self.mode!r}")
+
+    def _transform_site(self, sequences: list[str], df: pd.DataFrame) -> np.ndarray:
+        """Site-extraction path for transform(). Requires 'mutant' column."""
+        if "mutant" not in df.columns:
+            raise ValueError(
+                "ESMEncoder(mode='site') requires a 'mutant' column in the DataFrame "
+                "(e.g. 'A23V' or 'A23V:G45L'). Check that your dataset CSV includes "
+                "the mutant string."
+            )
+        mutant_strs = list(df["mutant"])
+
+        self._load_site_cache()
+        assert self._site_cache is not None
+
+        site_keys = [self._site_key(seq, mut) for seq, mut in zip(sequences, mutant_strs)]
+        missing_indices = [i for i, k in enumerate(site_keys) if k not in self._site_cache]
+
+        if missing_indices:
+            # Deduplicate by site_key — same (seq, mutant) pair need not be embedded twice.
+            seen: dict[str, tuple[str, str]] = {}  # site_key → (seq, mutant_str)
+            for i in missing_indices:
+                k = site_keys[i]
+                if k not in seen:
+                    seen[k] = (sequences[i], mutant_strs[i])
+            unique_keys = list(seen.keys())
+            unique_seqs = [seen[k][0] for k in unique_keys]
+            unique_muts = [seen[k][1] for k in unique_keys]
+            log.info(
+                "Computing ESM-2 (%s) site embeddings for %d new variants.",
+                self.model_name, len(unique_seqs),
+            )
+            new_embs = self._embed_sequences_site(unique_seqs, unique_muts)
+            for k, emb in zip(unique_keys, new_embs):
+                self._site_cache[k] = emb
+            self._save_site_cache()
+
+        result = np.stack([self._site_cache[k] for k in site_keys])
+        if self._hidden_size is None:
+            self._hidden_size = result.shape[1]
+        return result
 
     @property
     def n_features(self) -> int:

@@ -72,6 +72,53 @@ Stiffler 2015 (killed partway through), PABP_YEAST_Melamed_2013, BRCA1_HUMAN_Fin
 
 ---
 
+## 2026-07-09 — Sprint 2 Step 2a: plm_site mode in ESMEncoder
+
+**Branch:** `feature/sprint2-repr-surrogate`
+
+### Task summary
+Added `mode='site'` to `ESMEncoder`. Instead of mean-pooling all residue hidden states,
+site mode extracts only the ESM-2 hidden states at the mutated residue positions and
+averages across sites. Designed for single-site datasets; for multi-site combinatorial
+(e.g., GB1 4-site), `mode='delta'` is the recommended baseline since site-averaging
+across 4 distant positions may wash out signal.
+
+### Design decisions
+- **Separate cache**: site embeddings keyed by `sha256(seq + "::" + mutant_str)` in
+  `cache_{model}_site.pkl`. Cannot reuse the mean-pool cache since the extracted vector
+  depends on which positions are mutated, not just the sequence.
+- **Token indexing**: ESM-2 prepends `<cls>` at token 0, so 0-indexed residue position
+  `p` maps to token index `p+1` in `last_hidden_state`.
+- **`mutant` column required**: `transform()` raises `ValueError` with a clear message
+  if the `mutant` column is absent. `labeled_df` and `pool_df` both include `mutant`
+  (it is in `_FEATURE_COLS`), so this is only a guard for misuse.
+- **Multi-site**: averaging across sites is the first-pass approach; dedicated per-site
+  delta (`h_mut[i] - h_wt[i]`) is deferred to a follow-up.
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/rag_al/representations/plm.py` | Added `import re`, `_parse_mutant_positions()` helper, `_site_cache` / `_site_cache_path()` / `_load_site_cache()` / `_save_site_cache()`, `_embed_sequences_site()`, `_transform_site()` helper, updated `__init__` mode validation, updated `transform()` dispatch |
+| `src/rag_al/core/config.py` | Added `"plm_site"` to `REPRESENTATIONS` tuple |
+| `src/rag_al/cli/benchmark.py` | Added `"plm_site"` case in `_build_encoder()` |
+| `tests/test_plm_site.py` | New: 12 tests covering position parsing, output shape/dtype, correct token extraction, multi-site averaging, missing-mutant error, disk cache reuse, and invalid mode guard |
+
+### Tests run
+```
+pytest tests/test_plm_site.py -v   → 12/12 passed
+pytest tests/ -v                   → 37/37 passed
+ruff check src/                    → All checks passed
+```
+
+### Remaining concerns
+- For multi-site (GB1, GFP), try this mode first. If it underperforms `plm_delta`,
+  implement per-site delta (`h_mut[i] - h_wt[i]`) as a follow-up.
+- `_embed_sequences_site()` iterates over the batch dimension in Python after the GPU
+  forward pass (for per-variant position indexing). This is slightly slower than the
+  fully vectorized mean-pool path but correct and cache-friendly.
+
+---
+
 ## 2026-06-17 — PLM cache: replace order-validated array cache with seq-hash dict
 
 **Branch:** `fix/plm-cache-hashmap`

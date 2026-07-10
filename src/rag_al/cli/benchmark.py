@@ -139,6 +139,15 @@ def _build_encoder(cfg, log):
             cache_dir=p.dataset_embed_dir,
         )
 
+    if repr_name == "plm_site":
+        log.info("Encoder: ESMEncoder(mode='site', model=%s)", cfg.esm_model)
+        return ESMEncoder(
+            model_name=cfg.esm_model,
+            mode="site",
+            embed_batch_size=cfg.embed_batch_size,
+            cache_dir=p.dataset_embed_dir,
+        )
+
     if repr_name == "plm_retrieval":
         log.info(
             "Encoder: RetrievalAugmentedEncoder(k=%d, model=%s)",

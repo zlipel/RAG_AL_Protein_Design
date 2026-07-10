@@ -13,6 +13,7 @@ REPRESENTATIONS: tuple[str, ...] = (
     "physicochemical",
     "plm_mean",
     "plm_delta",
+    "plm_site",
     "plm_retrieval",
 )
 
