@@ -72,6 +72,47 @@ Stiffler 2015 (killed partway through), PABP_YEAST_Melamed_2013, BRCA1_HUMAN_Fin
 
 ---
 
+## 2026-07-10 — Sprint 2 Step 2b: PLMPhysicoEncoder and PLMSimpleConcatEncoder
+
+**Branch:** `feature/sprint2-repr-surrogate`
+
+### Task summary
+Added two new encoder variants combining PLM embeddings with physicochemical features:
+
+**PLMPhysicoEncoder** (`plm_physico`): per-residue fusion. For each residue i, concats
+`[h_i | p_i]` where `h_i` is the ESM-2 hidden state and `p_i` is a 5-dim lookup vector
+[hydropathy, charge, MW, polar, aromatic]. Mean-pooled to `(D_esm + 5)`. Separate cache
+`cache_{model}_physico.pkl` keyed by `sha256(seq)`.
+
+**PLMSimpleConcatEncoder** (`plm_concat`): post-hoc sequence-level concat of ESM-2
+mean-pool and the 29-dim PhysicochemicalEncoder output. Output dim: `D_esm + 29`.
+The physico scaler is fit on the labeled set only (leakage-safe).
+
+### Design note — feature scale and GP normalization
+The physico features (hydropathy, MW, etc.) are on different scales than ESM-2 hidden
+states. For the RF surrogate this is benign (trees are scale-invariant). For the GP
+surrogate (Step 3), the GP input standardization (per-dimension X_mean/X_std in
+`GPSurrogate.fit()`) will handle this at training time — no need to normalize in the
+encoder. The per-residue physico vector in `PLMPhysicoEncoder` is raw (not pre-scaled);
+this is correct because the GP standardizes the full fused vector, not each sub-part.
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/rag_al/representations/plm_physico.py` | New: `_sequence_to_physico()`, `PLMPhysicoEncoder`, `PLMSimpleConcatEncoder` |
+| `src/rag_al/core/config.py` | Added `"plm_physico"`, `"plm_concat"` to `REPRESENTATIONS` |
+| `src/rag_al/cli/benchmark.py` | Added cases for `"plm_physico"` and `"plm_concat"` in `_build_encoder()` |
+| `tests/test_plm_physico.py` | New: 17 tests covering per-residue properties, output shapes, cache reuse, concat width, and fit-before-transform guard |
+
+### Tests run
+```
+pytest tests/test_plm_physico.py -v   → 17/17 passed
+pytest tests/ -v                      → 54/54 passed
+ruff check src/                       → All checks passed
+```
+
+---
+
 ## 2026-07-09 — Sprint 2 Step 2a: plm_site mode in ESMEncoder
 
 **Branch:** `feature/sprint2-repr-surrogate`

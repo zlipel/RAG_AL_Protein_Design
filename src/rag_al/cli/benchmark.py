@@ -148,6 +148,24 @@ def _build_encoder(cfg, log):
             cache_dir=p.dataset_embed_dir,
         )
 
+    if repr_name == "plm_physico":
+        from ..representations.plm_physico import PLMPhysicoEncoder
+        log.info("Encoder: PLMPhysicoEncoder(model=%s)", cfg.esm_model)
+        return PLMPhysicoEncoder(
+            model_name=cfg.esm_model,
+            embed_batch_size=cfg.embed_batch_size,
+            cache_dir=p.dataset_embed_dir,
+        )
+
+    if repr_name == "plm_concat":
+        from ..representations.plm_physico import PLMSimpleConcatEncoder
+        log.info("Encoder: PLMSimpleConcatEncoder(model=%s)", cfg.esm_model)
+        return PLMSimpleConcatEncoder(
+            model_name=cfg.esm_model,
+            embed_batch_size=cfg.embed_batch_size,
+            cache_dir=p.dataset_embed_dir,
+        )
+
     if repr_name == "plm_retrieval":
         log.info(
             "Encoder: RetrievalAugmentedEncoder(k=%d, model=%s)",

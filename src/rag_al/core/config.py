@@ -14,6 +14,8 @@ REPRESENTATIONS: tuple[str, ...] = (
     "plm_mean",
     "plm_delta",
     "plm_site",
+    "plm_physico",
+    "plm_concat",
     "plm_retrieval",
 )
 
