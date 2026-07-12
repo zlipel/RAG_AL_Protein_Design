@@ -30,6 +30,35 @@ Planned work (all slots into existing `AbstractEncoder`/`AbstractSurrogate` inte
 
 ---
 
+## Status (updated 2026-07-10)
+
+| Step | Status | Commit / Notes |
+|------|--------|----------------|
+| Step 0 — Curate GFP + GB1 | ✅ Done | `data/curated/GFP_AEQVI_Sarkisyan_2016.csv`, `SPG1_STRSG_Wu_2016.csv`; embed + benchmark scripts updated |
+| Step 1 — pool_spearman metric | ✅ Done | `runner.py`, `metrics.py`, `plot_results.py`; 37/37 tests pass |
+| Step 2a — `plm_site` mode | ✅ Done | `plm.py` — `_parse_mutant_positions()`, separate `_site.pkl` cache; 12 tests |
+| Step 2b — PLMPhysico + PLMConcat | ✅ Done | `plm_physico.py` — per-residue `[h_i\|p_i]` pool + post-hoc concat; 17 tests; 54/54 total |
+| Step 3 — GP surrogate | 🔄 Next | `surrogates/gp.py`; warm-start MLL; see architecture note below |
+| Step 4 — HFPLMEncoder (ProtT5, Ankh, E1) | ⬜ Pending | `representations/hf_plm.py` |
+| Step 5 — ESM-2 size sweep | ⬜ Pending | Config-only; needs embed runs on cluster |
+| Step 6a — `plot_learning_curves.py` | ⬜ Pending | Crossover analysis on existing results |
+| Step 6b — low n_init sweep | ⬜ Pending | Gated on Step 6a findings |
+
+### Architecture decision — GP training (resolved)
+
+`fit()` vs. separate `Trainer` class: **training stays in `fit()`** for Sprint 2.
+
+Rationale: the warm-start protocol is stateful across `fit()` calls (`_prev_state` persists
+round-to-round). A Trainer instantiated per call discards that state; a stateful Trainer is
+functionally equivalent to inlining the loop. With only one training protocol in Sprint 2,
+extraction adds a layer without earning its keep.
+
+**When to extract (document, don't implement now):** when the emergent property retrospective
+needs k-fold hyperparameter selection, add `AbstractSurrogateTrainer` with `WarmStartTrainer`
+and `KFoldGPTrainer` subclasses, and have `GPSurrogate` accept an optional `trainer=` argument.
+
+---
+
 ## Design Notes
 
 ### GP Surrogate — Protocol Discussion
@@ -221,7 +250,7 @@ the hidden pool — currently invisible.
 from scipy.stats import spearmanr
 # metric-only oracle read — same category as topk_recall / global_optimum
 pool_fitness_oracle = dataset.fitness_at(pool_indices)
-rho = float(spearmanr(mu, pool_fitness_oracle).statistic)
+rho = float(spearmanr(mu, pool_fitness_oracle)[0])  # [0] for scipy < 1.9 compat
 ```
 
 Pass `pool_spearman=rho` to `compute_round_metrics()`.
@@ -361,7 +390,7 @@ One commit per step. Merge to `audit/agent-scaffold` after each step passes
 | `plm_site` mode | S (1 hr) | Low |
 | Per-residue physico fusion | M (2 hr) | Low-medium |
 | Simple concat baseline | XS (30 min) | Low |
-| GP surrogate (warm-start + MLL patience) | M (3–4 hr) | Medium |
+| GP surrogate (warm-start + MLL patience) | M (3–4 hr) | Medium — calibration quality (σ vs. error correlation) and gpytorch device quirks are the real unknowns; n_iter=200 is just a cap, patience makes it adaptive |
 | ProtT5 backend | M (2 hr) | Low-medium — T5EncoderModel quirks |
 | Ankh backend | M (1.5 hr) | Low-medium — is_split_into_words |
 | Profluent E1 backend | S (30 min) | Low — AutoModel, no preprocessing |

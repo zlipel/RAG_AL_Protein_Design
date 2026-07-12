@@ -72,6 +72,34 @@ Stiffler 2015 (killed partway through), PABP_YEAST_Melamed_2013, BRCA1_HUMAN_Fin
 
 ---
 
+## 2026-07-10 — Sprint 2 architecture decisions (GP surrogate design)
+
+**Branch:** `feature/sprint2-repr-surrogate`
+
+### Decisions recorded (no code change)
+
+**GP training: `fit()` vs. separate `Trainer` class**
+Decision: keep training logic inside `GPSurrogate.fit()` for Sprint 2.
+- The warm-start protocol is inherently stateful across rounds (`_prev_state` persists
+  between `fit()` calls). A stateless Trainer loses this; a stateful one is equivalent
+  to inlining the loop.
+- One training protocol in Sprint 2 — extraction is premature without a second protocol.
+- Future: when the emergent property retrospective needs k-fold, add
+  `AbstractSurrogateTrainer` with `WarmStartTrainer` / `KFoldGPTrainer` subclasses.
+
+**GP risk clarification**
+The feasibility note "standardization and n_iter need empirical tuning" was imprecise:
+- Standardization is deterministic (per-dim mean/std from labeled X). No tuning.
+- `n_iter=200` is a cap; patience early-stopping makes it adaptive.
+- The actual unknowns are calibration quality (does σ meaningfully correlate with
+  prediction error?) and gpytorch device quirks. Both diagnosed at run-time:
+  `pool_spearman` tracks calibration; device issues surface in the smoke test.
+
+**`sprint2_plan.md` updated** with status table (Steps 0–2b ✅, Step 3 🔄) and
+corrected GP risk note.
+
+---
+
 ## 2026-07-10 — Sprint 2 Step 2b: PLMPhysicoEncoder and PLMSimpleConcatEncoder
 
 **Branch:** `feature/sprint2-repr-surrogate`
