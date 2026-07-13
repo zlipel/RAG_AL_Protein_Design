@@ -65,8 +65,12 @@ class BenchmarkConfig:
     seed: int = 0
 
     # ---- Surrogate ------------------------------------------------------
-    n_estimators: int = 100  # RF trees
-    rf_n_jobs: int = 1       # cores per RF fit; set >1 only when running single-cell
+    surrogate: str = "rf"     # "rf" | "gp"
+    n_estimators: int = 100   # RF: number of trees
+    rf_n_jobs: int = 1        # RF: cores per fit; set >1 only when running single-cell
+    gp_n_iter: int = 200      # GP: max Adam steps per round
+    gp_lr: float = 0.01       # GP: Adam learning rate
+    gp_patience: int = 3      # GP: patience checks (each = 20 steps)
 
     # ---- Acquisition hyperparameters ------------------------------------
     ucb_beta: float = 1.0           # UCB exploration weight β
@@ -104,6 +108,8 @@ class BenchmarkConfig:
 
     def validate(self) -> None:
         """Raise ValueError/FileNotFoundError on invalid configuration."""
+        if self.surrogate not in ("rf", "gp"):
+            raise ValueError(f"surrogate must be 'rf' or 'gp', got {self.surrogate!r}")
         if self.representation not in REPRESENTATIONS:
             raise ValueError(
                 f"representation must be one of {REPRESENTATIONS}, got {self.representation!r}"

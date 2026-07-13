@@ -72,6 +72,61 @@ Stiffler 2015 (killed partway through), PABP_YEAST_Melamed_2013, BRCA1_HUMAN_Fin
 
 ---
 
+## 2026-07-12 — Sprint 2 Step 3: GPSurrogate
+
+**Branch:** `feature/sprint2-repr-surrogate`
+
+### Task summary
+Implemented `GPSurrogate` — a single-task ExactGP with Matérn 3/2 kernel, round-to-round
+warm start, and MLL patience stopping. Wired into `benchmark.py` via `_build_surrogate(cfg)`;
+activated with `--surrogate gp`.
+
+### Design
+- **Model:** `_GPRegressionModel(ExactGP)` with `ConstantMean` + `ScaleKernel(MaternKernel(nu=1.5))`.
+  Defined directly in `gp.py` — does not import from al_active_dev (which uses a multitask model).
+- **Standardization:** per-dim X mean/std and y mean/std computed in `fit()`, un-standardized
+  in `predict()`. Handles mixed-scale features (e.g., plm_physico's ESM + physico dims) at
+  training time, so encoders stay scale-agnostic.
+- **Warm start:** `_prev_state` stores `model.state_dict()` + `likelihood.state_dict()` after
+  each `fit()`. On next call, a new ExactGP is created with the enlarged labeled set and hypers
+  loaded from `_prev_state` before continuing Adam steps.
+- **Patience:** check MLL every 20 steps; if improvement < 1e-4 for 3 consecutive checks,
+  stop early. `n_iter=200` is a cap, not a target — warm starts typically exit well before it.
+- **Prediction:** `fast_pred_var` (CG-based) avoids materializing the O(n²) covariance matrix.
+- **Device:** auto-detects CUDA; falls back to CPU. `device="cpu"` used in all tests.
+
+### Config / CLI changes
+Added to `BenchmarkConfig`:
+- `surrogate: str = "rf"` — use `--surrogate gp` to select GP
+- `gp_n_iter: int = 200`, `gp_lr: float = 0.01`, `gp_patience: int = 3`
+- `validate()` checks `surrogate in ("rf", "gp")`
+
+`benchmark.py` `_run()` now calls `_build_surrogate(cfg)` instead of hardcoding RFSurrogate.
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/rag_al/surrogates/gp.py` | New: `_GPRegressionModel`, `GPSurrogate` |
+| `src/rag_al/core/config.py` | Added `surrogate`, `gp_n_iter`, `gp_lr`, `gp_patience`; validate() check |
+| `src/rag_al/cli/benchmark.py` | Replaced hardcoded `RFSurrogate` with `_build_surrogate(cfg)` |
+| `tests/test_gp_surrogate.py` | New: 10 tests (shapes, sigma ≥ 0, warm-start state, predict-before-fit, end-to-end runner) |
+
+### Tests run
+```
+pytest tests/test_gp_surrogate.py -v   → 10/10 passed
+pytest tests/ -q                       → 64/64 passed
+ruff check src/                        → All checks passed
+```
+
+### Remaining concerns
+- NumericalWarning (`Negative variance values detected. Rounding to 1e-06`) appears when
+  predicting with very few labeled points (≤10). This is gpytorch's internal floor — benign
+  for Sprint 2. If it persists at larger n_labeled, add a jitter via `gpytorch.settings.cholesky_jitter`.
+- Calibration quality (σ vs. actual error) is not validated here — diagnosed at run-time via
+  `pool_spearman` once cluster runs complete.
+
+---
+
 ## 2026-07-10 — Sprint 2 architecture decisions (GP surrogate design)
 
 **Branch:** `feature/sprint2-repr-surrogate`

@@ -67,12 +67,7 @@ def _run(cfg, log):
     encoder = _build_encoder(cfg, log)
 
     # ---- Build surrogate ----------------------------------------------------
-    from ..surrogates.random_forest import RFSurrogate
-    surrogate = RFSurrogate(
-        n_estimators=cfg.n_estimators,
-        random_state=cfg.seed,
-        n_jobs=cfg.rf_n_jobs,
-    )
+    surrogate = _build_surrogate(cfg)
 
     # ---- Build acquisition --------------------------------------------------
     acquisition = _build_acquisition(cfg)
@@ -180,6 +175,25 @@ def _build_encoder(cfg, log):
         return RetrievalAugmentedEncoder(esm_encoder=esm, n_neighbors=cfg.n_neighbors)
 
     raise ValueError(f"Unknown representation: {repr_name!r}")
+
+
+def _build_surrogate(cfg):
+    """Construct the surrogate specified in cfg.surrogate."""
+    if cfg.surrogate == "rf":
+        from ..surrogates.random_forest import RFSurrogate
+        return RFSurrogate(
+            n_estimators=cfg.n_estimators,
+            random_state=cfg.seed,
+            n_jobs=cfg.rf_n_jobs,
+        )
+    if cfg.surrogate == "gp":
+        from ..surrogates.gp import GPSurrogate
+        return GPSurrogate(
+            n_iter=cfg.gp_n_iter,
+            lr=cfg.gp_lr,
+            patience=cfg.gp_patience,
+        )
+    raise ValueError(f"Unknown surrogate: {cfg.surrogate!r}")
 
 
 def _build_acquisition(cfg):

@@ -30,7 +30,7 @@ Planned work (all slots into existing `AbstractEncoder`/`AbstractSurrogate` inte
 
 ---
 
-## Status (updated 2026-07-10)
+## Status (updated 2026-07-12)
 
 | Step | Status | Commit / Notes |
 |------|--------|----------------|
@@ -38,7 +38,7 @@ Planned work (all slots into existing `AbstractEncoder`/`AbstractSurrogate` inte
 | Step 1 — pool_spearman metric | ✅ Done | `runner.py`, `metrics.py`, `plot_results.py`; 37/37 tests pass |
 | Step 2a — `plm_site` mode | ✅ Done | `plm.py` — `_parse_mutant_positions()`, separate `_site.pkl` cache; 12 tests |
 | Step 2b — PLMPhysico + PLMConcat | ✅ Done | `plm_physico.py` — per-residue `[h_i\|p_i]` pool + post-hoc concat; 17 tests; 54/54 total |
-| Step 3 — GP surrogate | 🔄 Next | `surrogates/gp.py`; warm-start MLL; see architecture note below |
+| Step 3 — GP surrogate | ✅ Done | `surrogates/gp.py` — ExactGP Matérn 3/2, warm-start, MLL patience; `--surrogate gp`; 10 tests; 64/64 total |
 | Step 4 — HFPLMEncoder (ProtT5, Ankh, E1) | ⬜ Pending | `representations/hf_plm.py` |
 | Step 5 — ESM-2 size sweep | ⬜ Pending | Config-only; needs embed runs on cluster |
 | Step 6a — `plot_learning_curves.py` | ⬜ Pending | Crossover analysis on existing results |
