@@ -226,5 +226,28 @@ def test_results_shape():
 
     assert len(results) == _N_ROUNDS
     for col in ("round", "n_labeled", "best_fitness", "simple_regret",
-                "topk10_recall", "topk50_recall", "batch_mean_fitness"):
+                "topk10_recall", "topk50_recall", "batch_mean_fitness",
+                "pool_spearman"):
         assert col in results.columns, f"Missing column in results: {col}"
+
+
+def test_pool_spearman_in_bounds():
+    """pool_spearman must be in [-1, 1] or NaN each round."""
+    import math
+    df = _make_synthetic_df()
+    dataset = ALDataset(df, n_init=_N_INIT, seed=_SEED)
+
+    results, _ = run_al_loop(
+        dataset=dataset,
+        encoder=_IdentityEncoder(),
+        surrogate=_ConstantSurrogate(),
+        acquisition=_RandomAcquisition(),
+        n_rounds=_N_ROUNDS,
+        batch_size=_BATCH_SIZE,
+        seed=_SEED,
+    )
+
+    for val in results["pool_spearman"]:
+        assert math.isnan(val) or (-1.0 <= val <= 1.0), (
+            f"pool_spearman out of range: {val}"
+        )

@@ -24,21 +24,34 @@
 # limit — skip it for embedding. Use mutation/physicochemical only for BRCA1.
 # -----------------------------------------------------------------------
 
-set -euo pipefail
+set -eo pipefail
 
 DATASET="${1:-BLAT_ECOLX_Jacquier_2013}"      # pass as positional arg
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"      # use 8M for prototyping, 650M for cluster
-DATA_DIR="data/curated"
-EMBED_CACHE_DIR="data/embeddings"
 EMBED_BATCH_SIZE=64                            # increase for A100/H100
 
-# --- Environment setup (adjust to your cluster module/conda setup) -----
+# --- Environment setup ---------------------------------------------------
 module purge
-module load anaconda3/2023.3                   # or your Python module
-conda activate rag_al                          # your conda env name
+module load anaconda3/2024.6
+conda activate rag_al
 
-# Navigate to project root (assumes script submitted from project root)
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+# Always submit from the project root: cd /home/.../rag_pipeline && sbatch scripts/submit_embed.sh
+if [[ -z "${SLURM_SUBMIT_DIR:-}" ]]; then
+    echo "ERROR: SLURM_SUBMIT_DIR is not set. Submit with sbatch from the project root." >&2
+    exit 1
+fi
+cd "$SLURM_SUBMIT_DIR"
+PROJECT_ROOT="$(pwd)"
+
+# Absolute paths — immune to subprocess cwd changes
+DATA_DIR="${PROJECT_ROOT}/data/curated"
+EMBED_CACHE_DIR="${PROJECT_ROOT}/data/embeddings"
+
+# Use cached model weights only — compute nodes have no outbound internet.
+# Run scripts/download_models.sh from the login node first.
+# HF_HOME defaults to ~/.cache/huggingface/ (home has ~27 GB free, sufficient
+# for 650M model). Override by setting HF_HOME in ~/.bashrc if needed.
+export HF_HUB_OFFLINE=1
 
 echo "============================================"
 echo "Job: $SLURM_JOB_ID"

@@ -566,6 +566,95 @@ Produces learning-curve PNG figures — one per metric per view
 
 ---
 
+## Planned Modules — Sprint 2
+
+The following modules do not exist yet. They slot into the existing
+`AbstractEncoder` / `AbstractSurrogate` interfaces with no architectural surgery.
+
+---
+
+### `src/rag_al/representations/plm_physico.py` *(planned)*
+
+**Class:** `PLMPhysicoEncoder(AbstractEncoder)`
+
+Wraps an `ESMEncoder` and a `PhysicochemicalEncoder`; concatenates their outputs.
+
+**Interface**
+- `fit(df, y)`: calls both component `fit()` methods
+- `transform(df) -> (N, D+29)`: `np.hstack([plm.transform(df), physico.transform(df)])`
+- `transform_labeled(df)`: delegates to `plm.transform_labeled()` and `physico.transform_labeled()`
+- `n_features`: `plm.n_features + physico.n_features`
+
+**Registered as:** `"plm_physico"` in `benchmark.py` encoder factory.
+
+**Label access:** NONE (both components ignore `y_labeled` in `transform`).
+
+---
+
+### `src/rag_al/representations/hf_plm.py` *(planned)*
+
+**Class:** `HFPLMEncoder(AbstractEncoder)`
+
+Generalized HuggingFace protein LM encoder supporting ProtT5, Ankh, and any
+BERT-style encoder. Same embedding modes (mean, delta) and hash-based disk cache
+as `ESMEncoder`.
+
+**Key parameter:** `model_name` — dispatches tokenization via `_preprocess()`:
+- ProtT5 (`Rostlab/prot_t5_xl_uniref50`): space-separated uppercase AAs;
+  uses `T5EncoderModel` + `T5Tokenizer`
+- Ankh (`ElnaggarLab/ankh-base`, `ankh-large`): sequences as-is; `AutoModel`
+- All others default to ESM-style tokenization
+
+**Registered as:** `"prot_t5"`, `"ankh"` (and potentially `"esm_c"`) in
+`benchmark.py` encoder factory.
+
+**Label access:** NONE.
+
+**BRCA1 note:** ProtT5 trained at ≤512 AA; Ankh supports ≤2048. Both skip
+BRCA1 (WT len 1863) via the same length guard used by `ESMEncoder`.
+
+---
+
+### `src/rag_al/surrogates/gp.py` *(planned)*
+
+**Class:** `GPSurrogate(AbstractSurrogate)`
+
+Gaussian process surrogate using gpytorch. Provides proper posterior uncertainty
+rather than RF ensemble spread.
+
+**Key design choices**
+- Use **approximate inference** (sparse GP / `ApproximateGP` with inducing points)
+  rather than exact MLL inversion — scales to n_labeled > 1K without O(n³) cost
+- Standardize X and y before fitting; un-standardize predictions
+- Expose `n_inducing` and `n_train_iter` as config fields
+- Fallback: raise `ImportError` if gpytorch unavailable (do not silently degrade)
+
+**Interface** (same as `RFSurrogate`)
+- `fit(X, y) -> None`
+- `predict(X) -> (mu, sigma)` — posterior mean and std as numpy float64 arrays
+
+**Registered as:** `--surrogate gp` via new `surrogate: str = "rf"` field in
+`BenchmarkConfig`.
+
+**User note:** User has existing GPR / Optuna surrogate code in other projects.
+Check with user before writing from scratch — they may want to supply the
+implementation directly.
+
+---
+
+### `src/rag_al/loop/metrics.py` — `pool_spearman` addition *(planned)*
+
+Add `pool_spearman` to `compute_round_metrics()`:
+- Computed from `scipy.stats.spearmanr(mu_pool, dataset.fitness_at(pool_indices))`
+- Oracle metric (accesses hidden pool fitness for evaluation only, same category
+  as `topk_recall` and `simple_regret`)
+- Must NOT be passed to acquisition function
+
+**Runner change:** in `runner.py`, after `surrogate.predict(X_pool)`, compute and
+pass `pool_spearman` to `compute_round_metrics()`.
+
+---
+
 ## Cross-Cutting Test Plan
 
 **Critical — must pass before any experiment**
