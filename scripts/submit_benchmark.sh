@@ -43,11 +43,11 @@ UCB_BETA=1.0
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"
 WORKERS=${SLURM_CPUS_PER_TASK:-48}
 
-# BRCA1 sequences exceed the ESM-2 1022-residue limit
+# BRCA1 sequences exceed the ESM-2 1022-residue limit — PLM reps excluded
 if [[ "$DATASET" == "BRCA1_HUMAN_Findlay_2018" ]]; then
     REPRS=(mutation physicochemical)
 else
-    REPRS=(mutation physicochemical plm_mean plm_delta plm_retrieval)
+    REPRS=(mutation physicochemical plm_mean plm_delta plm_retrieval plm_site plm_physico plm_concat)
 fi
 ACQS=(random greedy ucb diversity_ucb retrieval_ucb)
 
