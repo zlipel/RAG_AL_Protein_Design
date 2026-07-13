@@ -254,6 +254,7 @@ def main() -> None:
         ("topk10_recall",      "Top-10 recall"),
         ("topk50_recall",      "Top-50 recall"),
         ("batch_mean_fitness", "Batch mean fitness"),
+        ("pool_spearman",      "Pool Spearman ρ"),
     ]
 
     for metric, ylabel in metrics:

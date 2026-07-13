@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 from ..data.al_dataset import ALDataset
 from ..representations.base import AbstractEncoder
@@ -135,6 +136,11 @@ def run_al_loop(
         # ---- 4. Predict for pool --------------------------------------------
         mu, sigma = surrogate.predict(X_pool)        # (n_pool,), (n_pool,)
 
+        # Metric-only oracle read — same category as topk_recall / global_optimum.
+        # Measures how well the surrogate ranks the hidden pool this round.
+        _pool_oracle_y = dataset.fitness_at(dataset.pool_indices)
+        pool_spearman = float(spearmanr(mu, _pool_oracle_y)[0])
+
         # ---- 5. Select batch ------------------------------------------------
         selected_local = acquisition.select_batch(
             mu, sigma, batch_size,
@@ -183,6 +189,7 @@ def run_al_loop(
             global_optimum=global_optimum,
             top10_indices=top10_idx,
             top50_indices=top50_idx,
+            pool_spearman=pool_spearman,
         )
         rows.append(row)
         log.info(

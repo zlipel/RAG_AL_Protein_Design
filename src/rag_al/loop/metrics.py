@@ -171,6 +171,7 @@ def compute_round_metrics(
     global_optimum: float,
     top10_indices: np.ndarray,
     top50_indices: np.ndarray,
+    pool_spearman: float = float("nan"),
 ) -> dict[str, float | int]:
     """
     Compute all metrics for one active learning round.
@@ -197,6 +198,10 @@ def compute_round_metrics(
         Global indices of the top-10 variants.
     top50_indices : np.ndarray
         Global indices of the top-50 variants.
+    pool_spearman : float
+        Spearman ρ between surrogate predictions and oracle fitness over the
+        full unlabeled pool. Metric-only oracle read — same category as
+        topk_recall. Defaults to NaN if not provided (e.g. in older tests).
 
     Returns
     -------
@@ -212,4 +217,5 @@ def compute_round_metrics(
         "batch_mean_fitness": batch_mean_fitness(batch_y),
         "batch_diversity": batch_diversity(batch_sequences),
         "mean_dist_wt": mean_dist_from_wt(batch_sequences, wt_sequence),
+        "pool_spearman": pool_spearman,
     }

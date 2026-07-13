@@ -12,6 +12,8 @@ for D in \
     BLAT_ECOLX_Firnberg_2014 \
     BLAT_ECOLX_Stiffler_2015 \
     PABP_YEAST_Melamed_2013 \
-    BRCA1_HUMAN_Findlay_2018; do
+    BRCA1_HUMAN_Findlay_2018 \
+    GFP_AEQVI_Sarkisyan_2016 \
+    SPG1_STRSG_Wu_2016; do
     sbatch --job-name="bench_${D}" scripts/submit_benchmark.sh "$D"
 done
