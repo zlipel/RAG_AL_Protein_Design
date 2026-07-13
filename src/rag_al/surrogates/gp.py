@@ -79,7 +79,7 @@ class GPSurrogate(AbstractSurrogate):
     def __init__(
         self,
         n_iter: int = 200,
-        lr: float = 0.01,
+        lr: float = 0.1,
         patience: int = 3,
         tol: float = 1e-4,
         device: Optional[str] = None,
@@ -186,8 +186,10 @@ class GPSurrogate(AbstractSurrogate):
             (X - self._X_mean) / self._X_std, dtype=torch.float32
         ).to(self.device)
 
+        # Use the latent posterior p(f*|x*,X,y), not likelihood(model(x)) which adds
+        # observation noise. AL acquisition cares about epistemic uncertainty only.
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            pred = self._likelihood(self._model(Xs))
+            pred = self._model(Xs)
 
         mu = pred.mean.cpu().numpy() * self._y_std + self._y_mean
         sigma = pred.stddev.cpu().numpy() * self._y_std

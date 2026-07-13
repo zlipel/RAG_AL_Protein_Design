@@ -69,7 +69,7 @@ class BenchmarkConfig:
     n_estimators: int = 100   # RF: number of trees
     rf_n_jobs: int = 1        # RF: cores per fit; set >1 only when running single-cell
     gp_n_iter: int = 200      # GP: max Adam steps per round
-    gp_lr: float = 0.01       # GP: Adam learning rate
+    gp_lr: float = 0.1        # GP: Adam learning rate (0.1 is standard for MLL opt)
     gp_patience: int = 3      # GP: patience checks (each = 20 steps)
 
     # ---- Acquisition hyperparameters ------------------------------------
