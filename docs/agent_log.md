@@ -3,6 +3,31 @@
 
 ---
 
+## 2026-07-14 — GB1 embed submitted separately with longer wall time
+
+**Branch:** `feature/gb1-embed-walltime` (cut from `audit/agent-scaffold`)
+
+### Task summary
+With `rag-embed` now doing three heavy forward passes (mean, site, physico) per
+dataset, GB1 (`SPG1_STRSG_Wu_2016`, ~149K variants × ~448 AA) can exceed
+`submit_embed.sh`'s 2h `#SBATCH --time` ceiling. Split GB1 out of the
+`run_embed.sh` batch loop and submit it separately with a CLI `--time` override
+(default 8h, overridable via `GB1_WALLTIME`). All other datasets stay at 2h —
+GFP (~51K × 238 AA), the next largest, fits comfortably.
+
+### Files changed
+- `scripts/run_embed.sh` — batch loop now covers the 6 smaller PLM datasets;
+  GB1 gets a dedicated `sbatch --time="${GB1_WALLTIME:-08:00:00}"` submission.
+
+### Tests run
+- `bash -n scripts/run_embed.sh` → syntax OK (no unit tests — SLURM wrapper only).
+
+### Remaining concerns
+- 8h is a conservative default; if the GB1 job still hits the wall, bump with
+  `GB1_WALLTIME=12:00:00 bash scripts/run_embed.sh`.
+
+---
+
 ## 2026-07-14 — Embed pipeline: precompute site + physico caches; cache-isolation audit
 
 **Branch:** `feature/embed-plm-modes` (cut from `audit/agent-scaffold`)
