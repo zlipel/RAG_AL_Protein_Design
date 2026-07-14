@@ -514,17 +514,17 @@ leakage. Runner always passes `dataset.labeled_y`, which is guaranteed labeled-o
 
 ### `src/rag_al/cli/benchmark.py`  (`rag-benchmark`)
 
-**Purpose:** Run one (dataset × representation × acquisition × seed) cell.
+**Purpose:** Run one (dataset × representation × acquisition × surrogate × seed) cell.
 
 **What it does**
 1. Parses CLI → `BenchmarkConfig`
 2. `cfg.ensure()` → validates, creates dirs
 3. Loads dataset → `ALDataset` (fitness hidden from this point forward)
 4. Builds encoder via `_build_encoder(cfg)`
-5. Builds `RFSurrogate(n_estimators=cfg.n_estimators, random_state=cfg.seed)`
+5. Builds surrogate via `_build_surrogate(cfg)` → `RFSurrogate` or `GPSurrogate`
 6. Builds acquisition via `_build_acquisition(cfg)`
-7. Calls `run_al_loop(...)` → results DataFrame
-8. Prepends metadata columns; writes to `results/<dataset>/<tag>/seed_<N>.csv`
+7. Calls `run_al_loop(...)` → `(results_df, selections_df)`
+8. Prepends metadata columns; writes `seed_<N>.csv` and `seed_<N>_selections.csv`
 
 **Label access:** Only via `ALDataset`'s authorized interface after construction.
 
@@ -566,28 +566,73 @@ Produces learning-curve PNG figures — one per metric per view
 
 ---
 
-## Planned Modules — Sprint 2
+## Sprint 2 Modules — Implemented
 
-The following modules do not exist yet. They slot into the existing
-`AbstractEncoder` / `AbstractSurrogate` interfaces with no architectural surgery.
+The following modules were added in Sprint 2. All are live on `main`.
 
 ---
 
-### `src/rag_al/representations/plm_physico.py` *(planned)*
+### `src/rag_al/representations/plm_physico.py`
 
-**Class:** `PLMPhysicoEncoder(AbstractEncoder)`
+**Classes:** `PLMPhysicoEncoder`, `PLMSimpleConcatEncoder`
 
-Wraps an `ESMEncoder` and a `PhysicochemicalEncoder`; concatenates their outputs.
+**`PLMPhysicoEncoder`** (`"plm_physico"`, output dim D+5):
+Per-residue fusion. For each residue i: `fused_i = [h_i | p_i]` where `h_i` is the
+ESM-2 hidden state and `p_i` is a 5-dim lookup [hydropathy, charge, MW, polar, aromatic].
+Mean-pooled to (D+5,). Separate disk cache `cache_{model}_physico.pkl` keyed by `sha256(seq)`.
+Internal ESMEncoder has `cache_dir=None` to avoid writing an unused mean-pool cache.
+`fit()` is a no-op (lookup table is fixed).
 
-**Interface**
-- `fit(df, y)`: calls both component `fit()` methods
-- `transform(df) -> (N, D+29)`: `np.hstack([plm.transform(df), physico.transform(df)])`
-- `transform_labeled(df)`: delegates to `plm.transform_labeled()` and `physico.transform_labeled()`
-- `n_features`: `plm.n_features + physico.n_features`
+**`PLMSimpleConcatEncoder`** (`"plm_concat"`, output dim D+29):
+Post-hoc `np.hstack([ESM mean-pool, PhysicochemicalEncoder output])`. ESMEncoder
+passes `cache_dir` through so it shares `cache_{model}.pkl` with `plm_mean`.
 
-**Registered as:** `"plm_physico"` in `benchmark.py` encoder factory.
+**Label access:** NONE in `transform()`. `fit()` receives `y_labeled` but ignores it for physico
+lookup; physico scaler fits on labeled features only (correct).
 
-**Label access:** NONE (both components ignore `y_labeled` in `transform`).
+---
+
+### `src/rag_al/representations/plm.py` — `mode='site'` addition
+
+**`ESMEncoder(mode='site')`** (`"plm_site"`, output dim D):
+Extracts ESM-2 hidden states only at mutated residue positions and averages across sites.
+For `mutant="A23V"`, extracts token index 23 (0-indexed residue 22 + 1 for CLS).
+Multi-site: average across all mutated positions. Same output shape as `plm_mean`.
+Requires `mutant` column in `df` — raises `ValueError` if absent.
+Separate cache `cache_{model}_site.pkl` keyed by `sha256(seq + "::" + mutant_str)`.
+
+---
+
+### `src/rag_al/surrogates/gp.py`
+
+**Class:** `GPSurrogate(AbstractSurrogate)`
+
+Single-task ExactGP with `ConstantMean + ScaleKernel(MaternKernel(nu=1.5))`.
+
+**Key implementation details:**
+- `fit()`: standardizes X per-dim and y; likelihood used via `ExactMarginalLogLikelihood`
+  for training only. Warm-starts from `_prev_state` on subsequent rounds.
+- `predict()`: returns **latent posterior** `model(Xs)` — not `likelihood(model(Xs))`.
+  This gives pure epistemic σ; observation noise is intentionally excluded for acquisition.
+- MLL patience: check every 20 steps, stop if improvement < 1e-4 for 3 checks. `n_iter=200` cap.
+- `fast_pred_var` (CG-based) avoids O(n²) covariance matrix.
+- Auto-detects CUDA; falls back to CPU.
+
+**Registered as:** `--surrogate gp` via `surrogate` field in `BenchmarkConfig`.
+
+---
+
+### `src/rag_al/loop/metrics.py` — `pool_spearman`
+
+`pool_spearman` added to `compute_round_metrics()`:
+- `float(spearmanr(mu, dataset.fitness_at(pool_indices))[0])` (uses `[0]` not `.statistic` for scipy < 1.9)
+- Oracle metric: accesses hidden pool fitness for evaluation only. Same category as `topk_recall`.
+- Must NOT be passed to the acquisition function.
+- Computed in `runner.py` after `surrogate.predict(X_pool)`, before acquisition.
+
+---
+
+## Planned Modules — Sprint 3
 
 ---
 
@@ -595,63 +640,39 @@ Wraps an `ESMEncoder` and a `PhysicochemicalEncoder`; concatenates their outputs
 
 **Class:** `HFPLMEncoder(AbstractEncoder)`
 
-Generalized HuggingFace protein LM encoder supporting ProtT5, Ankh, and any
-BERT-style encoder. Same embedding modes (mean, delta) and hash-based disk cache
-as `ESMEncoder`.
+Generalized HuggingFace protein LM encoder supporting ProtT5, Ankh, Profluent E1,
+and any BERT-style encoder. Same hash-based disk cache as `ESMEncoder`.
 
-**Key parameter:** `model_name` — dispatches tokenization via `_preprocess()`:
-- ProtT5 (`Rostlab/prot_t5_xl_uniref50`): space-separated uppercase AAs;
-  uses `T5EncoderModel` + `T5Tokenizer`
-- Ankh (`ElnaggarLab/ankh-base`, `ankh-large`): sequences as-is; `AutoModel`
-- All others default to ESM-style tokenization
+**Priority order for outreach:** Profluent E1 (ESM-like, trivial) → Ankh → ProtT5
 
-**Registered as:** `"prot_t5"`, `"ankh"` (and potentially `"esm_c"`) in
-`benchmark.py` encoder factory.
+**Preprocessing per model:**
+- ProtT5 (`Rostlab/prot_t5_xl_uniref50`, ~3GB): space-separate AAs, B/Z/U/O→X, uppercase; `T5EncoderModel`
+- Ankh (`ElnaggarLab/ankh-base`, ~450MB): `tokenizer([list(seq) for seq in seqs], is_split_into_words=True, ...)`; `AutoModel`
+- Profluent E1 (`Profluent-Bio/E1-600m`): no preprocessing; `AutoModel` — same as ESM-like
 
-**Label access:** NONE.
+**CLI:** add `"prot_t5"`, `"ankh"`, `"profluent_e1"` to `REPRESENTATIONS` in `config.py`;
+add cases to `_build_encoder()` in `benchmark.py`.
 
-**BRCA1 note:** ProtT5 trained at ≤512 AA; Ankh supports ≤2048. Both skip
-BRCA1 (WT len 1863) via the same length guard used by `ESMEncoder`.
+**BRCA1 guard:** ProtT5 ≤1022 AA, Ankh ≤2048 AA. Same length-guard pattern as `ESMEncoder`.
 
 ---
 
-### `src/rag_al/surrogates/gp.py` *(planned)*
+### `scripts/plot_learning_curves.py` *(planned)*
 
-**Class:** `GPSurrogate(AbstractSurrogate)`
+Crossover analysis: at what `n_labeled` does PLM first beat mutation?
+- x-axis: `n_labeled` (not round); reads from existing `seed_*.csv` results
+- Line plot per representation, averaged over seeds and acquisitions
+- Annotate crossover round per dataset
+- Inputs: existing results in `results/` — no new cluster runs needed
 
-Gaussian process surrogate using gpytorch. Provides proper posterior uncertainty
-rather than RF ensemble spread.
-
-**Key design choices**
-- Use **approximate inference** (sparse GP / `ApproximateGP` with inducing points)
-  rather than exact MLL inversion — scales to n_labeled > 1K without O(n³) cost
-- Standardize X and y before fitting; un-standardize predictions
-- Expose `n_inducing` and `n_train_iter` as config fields
-- Fallback: raise `ImportError` if gpytorch unavailable (do not silently degrade)
-
-**Interface** (same as `RFSurrogate`)
-- `fit(X, y) -> None`
-- `predict(X) -> (mu, sigma)` — posterior mean and std as numpy float64 arrays
-
-**Registered as:** `--surrogate gp` via new `surrogate: str = "rf"` field in
-`BenchmarkConfig`.
-
-**User note:** User has existing GPR / Optuna surrogate code in other projects.
-Check with user before writing from scratch — they may want to supply the
-implementation directly.
+**Gate for Step 6b (low n_init sweep):** only run if crossover ≤ n_init=50 on any dataset.
 
 ---
 
-### `src/rag_al/loop/metrics.py` — `pool_spearman` addition *(planned)*
+### Low n_init sweep *(planned, gated on plot_learning_curves.py findings)*
 
-Add `pool_spearman` to `compute_round_metrics()`:
-- Computed from `scipy.stats.spearmanr(mu_pool, dataset.fitness_at(pool_indices))`
-- Oracle metric (accesses hidden pool fitness for evaluation only, same category
-  as `topk_recall` and `simple_regret`)
-- Must NOT be passed to acquisition function
-
-**Runner change:** in `runner.py`, after `surrogate.predict(X_pool)`, compute and
-pass `pool_spearman` to `compute_round_metrics()`.
+Config-only: `n_init ∈ {25, 50}`, `batch_size=25`, `n_rounds=30`.
+Datasets: BLAT_Deng, PABP, GB1 (SPG1). No code changes — new `submit_small_init.sh`.
 
 ---
 

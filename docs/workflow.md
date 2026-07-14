@@ -64,24 +64,34 @@ All documented findings have been addressed.
 
 ---
 
-## Current State
+## Current State (as of 2026-07-14)
 
-All original audit findings (Bugs #1–4, Gap #1, ESMEncoder performance) are resolved.
-The scaffold is ready for a final merge to `main` once `fix/plm-cache-hashmap` is merged
-into `audit/agent-scaffold`:
+**Sprint 1 and Sprint 2 complete. Both merged to `main` and pushed.**
 
+All original audit findings (Bugs #1–4, Gap #1, ESMEncoder performance) resolved.
+Sprint 2 delivered: `plm_site`, `plm_physico`, `plm_concat` representations;
+`pool_spearman` metric; `GPSurrogate` (ExactGP, warm-start, MLL patience).
+
+64/64 tests passing. `ruff check src/` clean.
+
+**Active branches:**
+- `main` — current production state, all Sprint 2 work merged
+- `audit/agent-scaffold` — integration branch, also up to date with main
+
+**Cluster runs pending:**
+- Full RF benchmark: `submit_benchmark.sh` (8 reprs × 5 acqs × 3 seeds × 8 datasets)
+- Targeted GP: `submit_gp_benchmark.sh` (PABP + BLAT_Deng, RF vs GP paired)
+
+**Next feature work (Sprint 3):**
+1. `HFPLMEncoder` — ProtT5, Ankh, Profluent E1 in `src/rag_al/representations/hf_plm.py`
+2. `plot_learning_curves.py` — crossover analysis (when does PLM beat mutation?)
+3. Low n_init sweep — gated on crossover analysis findings
+4. ESM-2 size sweep (8M / 150M / 650M) — config-only once embed jobs run
+
+Start new feature work from `audit/agent-scaffold`:
 ```bash
-# 1. Merge the PLM cache branch
 git checkout audit/agent-scaffold
-git merge --no-ff fix/plm-cache-hashmap
-
-# 2. Verify full test suite
-pytest tests/ -v
-ruff check src/
-
-# 3. Merge to main
-git checkout main
-git merge --no-ff audit/agent-scaffold -m "merge: audited agent scaffold into main"
+git checkout -b feature/<name>
 ```
 
 ---
