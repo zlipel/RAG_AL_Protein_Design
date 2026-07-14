@@ -60,12 +60,20 @@ echo "Dataset: $DATASET"
 echo "Model: $ESM_MODEL"
 echo "============================================"
 
+# Precompute every cache the benchmark grid needs:
+#   mean    -> cache_{model}.pkl        (also serves plm_retrieval, plm_concat)
+#   delta   -> cache_{model}.pkl        (reuses mean cache + WT forward pass)
+#   site    -> cache_{model}_site.pkl   (plm_site)
+#   physico -> cache_{model}_physico.pkl (plm_physico)
+# NOTE: for multi-site datasets (GFP, GB1) 'site' averages across mutated
+# positions, which may dilute signal — kept for comparison; 'delta' is the
+# multi-site baseline. See docs/sprint2_plan.md.
 rag-embed \
     --dataset          "$DATASET" \
     --data_dir         "$DATA_DIR" \
     --embed_cache_dir  "$EMBED_CACHE_DIR" \
     --esm_model        "$ESM_MODEL" \
     --embed_batch_size "$EMBED_BATCH_SIZE" \
-    --modes mean delta
+    --modes mean delta site physico
 
 echo "Embedding job complete."
