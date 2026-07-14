@@ -37,9 +37,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--embed_batch_size", type=int, default=32,
                         help="Sequences per forward pass (default: 32)")
     parser.add_argument("--modes", nargs="+",
-                        default=["mean", "delta"],
-                        choices=["mean", "delta"],
-                        help="Embedding modes to compute (default: mean delta)")
+                        default=["mean", "delta", "site", "physico"],
+                        choices=["mean", "delta", "site", "physico"],
+                        help="Embedding modes to precompute. 'mean' also covers "
+                             "plm_retrieval and plm_concat (shared cache); 'physico' "
+                             "uses PLMPhysicoEncoder. Default precomputes everything "
+                             "the benchmark grid needs (mean delta site physico).")
     return parser.parse_args()
 
 
@@ -59,7 +62,9 @@ def main() -> None:
 
     # Import here to keep startup fast for --help
     from ..data.loader import load_dataset
+    from ..representations.base import AbstractEncoder
     from ..representations.plm import ESMEncoder
+    from ..representations.plm_physico import PLMPhysicoEncoder
 
     data_csv = args.data_dir / f"{args.dataset}.csv"
     log.info("Loading dataset: %s", data_csv)
@@ -69,18 +74,31 @@ def main() -> None:
     cache_dir = args.embed_cache_dir / args.dataset
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # Run 'mean' before 'delta' so delta reuses the mean-pool cache (delta then
+    # only needs the WT forward pass). Each mode writes to its own cache file:
+    #   mean/delta -> cache_{model}.pkl        (shared with plm_retrieval, plm_concat)
+    #   site       -> cache_{model}_site.pkl
+    #   physico    -> cache_{model}_physico.pkl
     for mode in args.modes:
         log.info("Computing %s embeddings with %s", mode, args.esm_model)
 
-        encoder = ESMEncoder(
-            model_name=args.esm_model,
-            mode=mode,
-            embed_batch_size=args.embed_batch_size,
-            cache_dir=cache_dir,
-        )
+        encoder: AbstractEncoder
+        if mode == "physico":
+            encoder = PLMPhysicoEncoder(
+                model_name=args.esm_model,
+                embed_batch_size=args.embed_batch_size,
+                cache_dir=cache_dir,
+            )
+        else:  # mean, delta, site -> ESMEncoder
+            encoder = ESMEncoder(
+                model_name=args.esm_model,
+                mode=mode,
+                embed_batch_size=args.embed_batch_size,
+                cache_dir=cache_dir,
+            )
 
-        # fit() needs WT sequence for delta mode
-        encoder.fit(df, np.zeros(len(df)))  # y is not used by ESMEncoder.fit
+        # fit() needs WT sequence for delta mode; no-op for the others.
+        encoder.fit(df, np.zeros(len(df)))  # y is not used by these encoders
 
         # transform() computes and caches all embeddings
         embeddings = encoder.transform(df)

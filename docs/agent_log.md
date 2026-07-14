@@ -3,6 +3,53 @@
 
 ---
 
+## 2026-07-14 — Embed pipeline: precompute site + physico caches; cache-isolation audit
+
+**Branch:** `feature/embed-plm-modes` (cut from `audit/agent-scaffold`)
+
+### Task summary
+`rag-embed` only precomputed `mean`/`delta`, so `plm_site` and `plm_physico` were
+never cached ahead of the benchmark. On the CPU benchmark nodes those two
+representations would have triggered full ESM-2 forward passes at run time
+(21K–149K variants for PABP/GFP/GB1), defeating the two-stage design. Extended the
+embed step to cover all four PLM caches and pinned down the cache-isolation invariant.
+
+### Files changed
+- `src/rag_al/cli/embed.py` — `--modes` now accepts `{mean, delta, site, physico}`
+  and defaults to all four; dispatch `physico` → `PLMPhysicoEncoder`, others →
+  `ESMEncoder`. Annotated the loop var `encoder: AbstractEncoder` (mypy union fix).
+- `scripts/submit_embed.sh` — passes `--modes mean delta site physico`; added a
+  multi-site caveat note (GFP/GB1 site-averaging may dilute signal).
+- `scripts/run_embed.sh` — comment noting each job now precomputes four caches.
+- `tests/test_cache_paths.py` (new) — 4 tests asserting mean/site/physico resolve
+  to distinct files, that mean+delta share one file, and that mean/physico share a
+  key function but never share a file (guards against a dropped suffix).
+
+### Cache-isolation audit (the question that motivated this)
+Distinct files in `data/embeddings/<dataset>/`, no overlap:
+- `cache_{model}.pkl` — mean/delta/retrieval/concat, key `sha256(seq)`, `(D,)`
+- `cache_{model}_site.pkl` — site, key `sha256(seq + "::" + mutant)`, `(D,)`
+- `cache_{model}_physico.pkl` — physico, key `sha256(seq)`, `(D+5,)`
+
+Note: mean and physico use the *same* key function; isolation rests solely on the
+filename suffix — now covered by a regression test.
+
+### Tests run
+- `pytest -q` → 68 passed (64 + 4 new cache-path tests)
+- `ruff check src/` → clean; `mypy src/rag_al/cli/embed.py` → clean
+- End-to-end: `rag-embed --modes mean delta site physico` on a 6-row subset with
+  ESM-2 8M produced 3 cache files with shapes `(320,)`, `(320,)`, `(325,)` as expected.
+- `mypy src/` baseline unchanged: 37 pre-existing errors in 13 files (lazy-import
+  `None`-callable pattern in `plm.py`/`plm_physico.py`/`retrieval.py`; missing
+  pandas/scipy/sklearn stubs). `embed.py` — the only file changed here — is clean.
+
+### Remaining concerns
+- `plm_site` on multi-site datasets (GFP median ~4 muts, GB1 4-site) averages across
+  mutated positions and may wash out signal; kept for comparison, `plm_delta` is the
+  multi-site baseline. Documented in `submit_embed.sh` and `docs/sprint2_plan.md`.
+
+---
+
 ## 2026-06-26 — PLM benchmark results: Deng 2012 & Firnberg 2014 analysis
 
 **Branch:** `audit/agent-scaffold`

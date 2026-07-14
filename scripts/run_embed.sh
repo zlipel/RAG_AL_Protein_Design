@@ -2,6 +2,9 @@
 # Submit one embed job per PLM-compatible dataset.
 # Run from the project root: bash scripts/run_embed.sh
 #
+# Each job precomputes all four PLM caches (mean, delta, site, physico) via
+# submit_embed.sh, covering every PLM representation in the benchmark grid.
+#
 # BRCA1 is excluded — WT length 1863 exceeds ESM-2's 1022-residue limit.
 
 set -eo pipefail
