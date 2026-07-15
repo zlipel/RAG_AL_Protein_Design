@@ -100,6 +100,7 @@ class BenchmarkConfig:
             acquisition=self.acquisition,
             seed=self.seed,
             ucb_beta=self.ucb_beta,
+            surrogate=self.surrogate,
         )
 
     # ------------------------------------------------------------------

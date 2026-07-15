@@ -118,10 +118,19 @@ sequence so labeled/pool subset calls are pure lookups after the first run.
 Runs one (dataset × representation × acquisition × surrogate × seed) cell. The full
 RF benchmark grid is 8 representations × 5 acquisitions × N seeds, submitted as a
 GNU-parallel job via `scripts/submit_benchmark.sh`. Results go to
-`results/<dataset>/<repr>_<acq>/seed_<N>.csv` (metrics) and
-`results/<dataset>/<repr>_<acq>/seed_<N>_selections.csv` (per-round acquisition log).
+`results/<dataset>/<tag>/seed_<N>.csv` (metrics) and
+`results/<dataset>/<tag>/seed_<N>_selections.csv` (per-round acquisition log),
+where `<tag> = <repr>_<acq>[_b<beta>][_<surrogate>]`. The surrogate suffix is
+**omitted for RF** (default, backward-compatible) and **appended for others**
+(e.g. `plm_mean_ucb_b1.0_gp`), so GP and RF runs of the same cell never
+overwrite each other. Each CSV also carries a `surrogate` column for
+disambiguation after aggregation. `submit_benchmark.sh` drops PLM reps for any
+dataset whose sequences exceed the ESM-2 1022-residue limit (length-probed from
+the CSV, not hardcoded by name).
 
-A separate targeted GP grid is submitted via `scripts/submit_gp_benchmark.sh`.
+A separate targeted **GP-only** grid is submitted via
+`scripts/submit_gp_benchmark.sh` — it relies on the main sweep for the paired RF
+baseline and writes to `_gp`-suffixed paths.
 
 ### Leakage enforcement — the critical invariant
 
