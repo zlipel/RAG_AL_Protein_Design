@@ -11,18 +11,25 @@
 # Increase to --gres=gpu:1 and set gp_device=cuda if training becomes a bottleneck.
 
 # -----------------------------------------------------------------------
-# Targeted GP surrogate benchmark: compares GPSurrogate against RFSurrogate
-# on the datasets and representations where surrogate calibration matters most.
+# Targeted GP surrogate benchmark: runs GPSurrogate on the datasets and
+# representations where surrogate calibration matters most.
 #
 # Primary motivation: PABP anomaly (RF σ miscalibrated on flat landscape).
 # Secondary: BLAT_Deng as a high-signal baseline for comparison.
 #
-# Grid: 3 reprs × 2 acqs × 3 seeds × 2 datasets = 36 GP cells
-#       + matching 36 RF cells for direct comparison = 72 total
+# GP-only by design. The RF baseline for the same cells comes from the main
+# sweep (submit_benchmark.sh), so we do NOT re-run RF here. GP results are
+# written to surrogate-namespaced paths (…_<repr>_<acq>_bβ_gp/) by paths._tag,
+# so they never overwrite the RF results from the main sweep.
+#
+# Grid: 3 reprs × 2 acqs × 3 seeds × 2 datasets = 36 GP cells.
+# To extend: add datasets to DATASETS / reprs to REPRS below. PLM reps are
+# auto-dropped for any dataset whose sequences exceed the ESM-2 limit.
 #
 # Prerequisites:
-#   - ESM-2 embeddings pre-computed (submit_embed.sh ran for both datasets).
+#   - ESM-2 embeddings pre-computed (submit_embed.sh ran for each dataset).
 #   - Curated CSVs exist in data/curated/.
+#   - Main sweep (submit_benchmark.sh) run for the same datasets → RF baseline.
 #
 # Usage (submit from project root):
 #   sbatch scripts/submit_gp_benchmark.sh
@@ -33,13 +40,14 @@ set -eo pipefail
 DATASETS=(PABP_YEAST_Melamed_2013 BLAT_ECOLX_Deng_2012)
 REPRS=(mutation plm_mean plm_physico)
 ACQS=(greedy ucb)
-SURROGATES=(rf gp)
+SURROGATES=(gp)          # GP-only; RF baseline comes from submit_benchmark.sh
 N_ROUNDS=20
 BATCH_SIZE=128
 N_SEEDS=3
 N_INIT=50
 UCB_BETA=1.0
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"
+ESM_MAX_RESIDUES=1022    # drop PLM reps for datasets exceeding this
 WORKERS=${SLURM_CPUS_PER_TASK:-16}
 
 # GP hyperparameters — defaults match GPSurrogate.__init__
@@ -77,8 +85,18 @@ echo "============================================"
 
 CMDS=()
 for dataset in "${DATASETS[@]}"; do
+    # Drop PLM reps for datasets whose sequences exceed the ESM-2 limit.
+    MAX_LEN=$(python -c "import pandas as pd; print(int(pd.read_csv('${DATA_DIR}/${dataset}.csv', usecols=['mutated_sequence'])['mutated_sequence'].str.len().max()))")
+    dataset_reprs=()
+    for repr in "${REPRS[@]}"; do
+        if [[ "$repr" == plm_* ]] && (( MAX_LEN > ESM_MAX_RESIDUES )); then
+            echo "Skipping $repr for $dataset (max len $MAX_LEN > $ESM_MAX_RESIDUES)."
+            continue
+        fi
+        dataset_reprs+=("$repr")
+    done
     for surrogate in "${SURROGATES[@]}"; do
-        for repr in "${REPRS[@]}"; do
+        for repr in "${dataset_reprs[@]}"; do
             for acq in "${ACQS[@]}"; do
                 for seed in $(seq 0 $((N_SEEDS - 1))); do
                     CMDS+=("rag-benchmark \

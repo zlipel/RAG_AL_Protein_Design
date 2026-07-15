@@ -84,16 +84,20 @@ def _run(cfg, log):
         log=log,
     )
 
-    # Attach metadata columns for easy downstream aggregation
+    # Attach metadata columns for easy downstream aggregation. `surrogate` is
+    # recorded so RF and GP rows for the same (repr, acq, seed) stay
+    # distinguishable after results are concatenated across runs.
     results.insert(0, "dataset", cfg.dataset)
     results.insert(1, "representation", cfg.representation)
     results.insert(2, "acquisition", cfg.acquisition)
-    results.insert(3, "seed", cfg.seed)
+    results.insert(3, "surrogate", cfg.surrogate)
+    results.insert(4, "seed", cfg.seed)
 
     selections.insert(0, "dataset", cfg.dataset)
     selections.insert(1, "representation", cfg.representation)
     selections.insert(2, "acquisition", cfg.acquisition)
-    selections.insert(3, "seed", cfg.seed)
+    selections.insert(3, "surrogate", cfg.surrogate)
+    selections.insert(4, "seed", cfg.seed)
 
     return results, selections
 

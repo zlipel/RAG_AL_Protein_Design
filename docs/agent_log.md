@@ -3,6 +3,59 @@
 
 ---
 
+## 2026-07-15 — Benchmark safety: surrogate-namespaced results + length-based PLM guard
+
+**Branch:** `feature/benchmark-safety-guards` (cut from `audit/agent-scaffold`)
+
+### Task summary
+Two pre-run hazards before launching the cluster sweep:
+1. **GP/RF file clash.** `seed_results_csv` = `results/<dataset>/<repr>_<acq>[_bβ]/seed_N.csv`
+   did not encode the surrogate, and the CSV had no `surrogate` column. So GP and
+   RF runs of the same (repr, acq, seed) overwrote each other's files, and even
+   in separate dirs `plot_results.py` (rglob + CSV columns) couldn't tell them
+   apart. `submit_gp_benchmark.sh` ran `SURROGATES=(rf gp)` — clashing with itself.
+2. **Too-long sequences.** The PLM-exclusion for BRCA1 was a hardcoded dataset-name
+   match in `submit_benchmark.sh`. Any other long dataset would slip through and
+   ESMEncoder would raise on >1022-residue sequences, aborting the whole GNU-parallel
+   job (`--halt soon,fail=1`).
+
+### Files changed
+- `src/rag_al/core/paths.py` — `_tag()` gains a `surrogate` arg; appends
+  `_{surrogate}` only when non-`rf`. `BenchmarkPaths` gains a `surrogate="rf"`
+  field. RF paths are unchanged (backward compatible with Sprint 1 results).
+- `src/rag_al/core/config.py` — `paths` property threads `surrogate` through.
+- `src/rag_al/cli/benchmark.py` — insert a `surrogate` column into results +
+  selections CSVs (position 3, before seed).
+- `scripts/submit_benchmark.sh` — length-probe the CSV (`max(len(mutated_sequence))`)
+  and drop PLM reps when it exceeds `ESM_MAX_RESIDUES=1022`, replacing the
+  hardcoded BRCA1 name check.
+- `scripts/submit_gp_benchmark.sh` — GP-only (`SURROGATES=(gp)`); RF baseline now
+  comes from the main sweep. Added the same per-dataset length guard so the grid
+  is safe to extend to long datasets. Header/grid comments updated (36 GP cells).
+- `tests/test_result_paths.py` (new) — 7 tests: RF tag backward-compat, GP suffix,
+  RF≠GP `seed_results_csv`/selections paths, config→path threading.
+- `CLAUDE.md` — documented the `<tag>` format, surrogate suffix, and length guard.
+
+### Verification
+- `pytest -q` → 75 passed (68 + 7 new). `ruff check src/` clean.
+  `mypy` clean on paths.py / config.py / benchmark.py.
+- Length probe on real CSVs: BRCA1 (max 1863) → EXCLUDE PLM; PABP (577), GB1 (448),
+  GFP (238), BLAT_Deng (286) → include PLM. Matches the old BRCA1-only behavior.
+- End-to-end: ran RF and GP cells for the same (Jacquier, mutation, ucb, seed 0) →
+  landed in `mutation_ucb_b1.0/` (surrogate=`rf`) and `mutation_ucb_b1.0_gp/`
+  (surrogate=`gp`). No overwrite; rows distinguishable.
+- `bash -n` on both submit scripts → syntax OK.
+
+### Remaining concerns
+- `plot_results.py` aggregates by (repr, acq) via rglob; once GP results exist it
+  should also group by the new `surrogate` column (or it will mix RF/GP curves).
+  Deferred — GP plotting is a Sprint 3 analysis task, and no GP results exist yet.
+- Note: curated PABP `mutated_sequence` max length is 577 (not the 75 AA quoted in
+  CLAUDE.md's dataset table) — still well under the ESM-2 limit, so no action; flag
+  for a later doc correction.
+
+---
+
 ## 2026-07-14 — GB1 embed submitted separately with longer wall time
 
 **Branch:** `feature/gb1-embed-walltime` (cut from `audit/agent-scaffold`)
