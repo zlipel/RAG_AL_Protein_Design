@@ -43,13 +43,8 @@ UCB_BETA=1.0
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"
 WORKERS=${SLURM_CPUS_PER_TASK:-48}
 
-# BRCA1 sequences exceed the ESM-2 1022-residue limit — PLM reps excluded
-if [[ "$DATASET" == "BRCA1_HUMAN_Findlay_2018" ]]; then
-    REPRS=(mutation physicochemical)
-else
-    REPRS=(mutation physicochemical plm_mean plm_delta plm_retrieval plm_site plm_physico plm_concat)
-fi
 ACQS=(random greedy ucb diversity_ucb retrieval_ucb)
+ESM_MAX_RESIDUES=1022   # ESM-2 hard limit; longer sequences cannot be embedded
 
 # --- Environment setup ---------------------------------------------------
 module purge
@@ -69,6 +64,18 @@ PROJECT_ROOT="$(pwd)"
 DATA_DIR="${PROJECT_ROOT}/data/curated"
 EMBED_CACHE_DIR="${PROJECT_ROOT}/data/embeddings"
 RESULTS_DIR="${PROJECT_ROOT}/results"
+
+# Representation set: drop PLM reps if any sequence exceeds the ESM-2 limit.
+# Length-based (not a hardcoded dataset name) so any long dataset is handled —
+# otherwise ESMEncoder raises on >1022-residue sequences and, with GNU parallel's
+# --halt soon,fail=1, aborts the entire job.
+MAX_LEN=$(python -c "import pandas as pd; print(int(pd.read_csv('${DATA_DIR}/${DATASET}.csv', usecols=['mutated_sequence'])['mutated_sequence'].str.len().max()))")
+if (( MAX_LEN > ESM_MAX_RESIDUES )); then
+    echo "Max sequence length ${MAX_LEN} > ${ESM_MAX_RESIDUES} (ESM-2 limit) — excluding PLM reps for ${DATASET}."
+    REPRS=(mutation physicochemical)
+else
+    REPRS=(mutation physicochemical plm_mean plm_delta plm_retrieval plm_site plm_physico plm_concat)
+fi
 
 # Use cached model weights only — compute nodes have no outbound internet.
 # HF_HOME defaults to ~/.cache/huggingface/ (home). Override in ~/.bashrc if needed.

@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def _tag(representation: str, acquisition: str, ucb_beta: float) -> str:
+def _tag(
+    representation: str,
+    acquisition: str,
+    ucb_beta: float,
+    surrogate: str = "rf",
+) -> str:
     """
     Generate a reproducible run tag from strategy choices.
 
@@ -16,6 +21,11 @@ def _tag(representation: str, acquisition: str, ucb_beta: float) -> str:
         Acquisition function name (e.g., 'ucb').
     ucb_beta : float
         UCB exploration weight (included in tag for UCB-family acquisitions).
+    surrogate : str
+        Surrogate model name (e.g., 'rf', 'gp'). Non-default surrogates are
+        appended to the tag so their results never collide with the default
+        RF run for the same (representation, acquisition, seed). 'rf' keeps the
+        historical suffix-free tag for backward compatibility.
 
     Returns
     -------
@@ -25,6 +35,8 @@ def _tag(representation: str, acquisition: str, ucb_beta: float) -> str:
     tag = f"{representation}_{acquisition}"
     if acquisition in ("ucb", "diversity_ucb", "retrieval_ucb"):
         tag += f"_b{ucb_beta}"
+    if surrogate != "rf":
+        tag += f"_{surrogate}"
     return tag
 
 
@@ -45,6 +57,7 @@ class BenchmarkPaths:
     acquisition: str
     seed: int
     ucb_beta: float = 1.0
+    surrogate: str = "rf"
 
     # ------------------------------------------------------------------
     # Tag
@@ -52,7 +65,7 @@ class BenchmarkPaths:
 
     @property
     def tag(self) -> str:
-        return _tag(self.representation, self.acquisition, self.ucb_beta)
+        return _tag(self.representation, self.acquisition, self.ucb_beta, self.surrogate)
 
     # ------------------------------------------------------------------
     # Results
