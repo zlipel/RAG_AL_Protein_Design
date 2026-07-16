@@ -16,16 +16,20 @@ ruff check src/
 # Type check
 mypy src/
 
-# Run full test suite (64 tests as of Sprint 2)
+# Run full test suite (75 tests as of Sprint 2 + benchmark-safety work)
 pytest
 
 # Run a single test file
 pytest tests/test_gp_surrogate.py -v
 
 # Pre-compute ESM-2 embeddings (GPU; run once per dataset before benchmark)
-# Curated CSVs live in data/curated/ — data_dir defaults there
-# plm_site uses the same cache as plm_mean (both stored in cache_{model}.pkl)
+# Curated CSVs live in data/curated/ — data_dir defaults there.
+# Default --modes precomputes all four PLM caches: mean/delta share
+# cache_{model}.pkl; site → cache_{model}_site.pkl; physico →
+# cache_{model}_physico.pkl (distinct files — see tests/test_cache_paths.py).
 rag-embed --dataset BLAT_ECOLX_Jacquier_2013 --esm_model facebook/esm2_t33_650M_UR50D
+# Cluster: all PLM datasets (GB1 auto-submitted separately at a longer wall time)
+bash scripts/run_embed.sh
 
 # Run one benchmark cell interactively (RF surrogate, default)
 rag-benchmark --dataset BLAT_ECOLX_Jacquier_2013 --representation plm_mean --acquisition ucb --seed 0
@@ -34,10 +38,12 @@ rag-benchmark --dataset BLAT_ECOLX_Jacquier_2013 --representation plm_mean --acq
 rag-benchmark --dataset PABP_YEAST_Melamed_2013 --representation plm_mean \
   --acquisition ucb --surrogate gp --seed 0
 
-# Cluster: full RF benchmark sweep for one dataset (8 reprs × 5 acqs × 3 seeds)
+# Cluster: full RF benchmark sweep for one dataset (8 reprs × 5 acqs × 3 seeds;
+# PLM reps auto-dropped for datasets whose sequences exceed the ESM-2 1022 limit)
 sbatch scripts/submit_benchmark.sh PABP_YEAST_Melamed_2013
 
-# Cluster: targeted GP vs RF comparison (PABP + BLAT_Deng, 36 GP + 36 RF cells)
+# Cluster: targeted GP-only benchmark (PABP + BLAT_Deng, 36 GP cells).
+# RF baseline comes from the main sweep; GP writes _gp-suffixed result dirs.
 sbatch scripts/submit_gp_benchmark.sh
 
 # Aggregate results and plot learning curves
@@ -247,12 +253,17 @@ See `docs/workflow.md` for the full per-fix process.
 | Sprint | Status | Notes |
 |--------|--------|-------|
 | Sprint 1 — core AL loop + ESM-2 representations | ✅ Complete | 6 datasets benchmarked; key finding: PLM+retrieval+UCB best overall (0.920 topk10_recall); PABP anomaly (PLM underperforms mutation on flat landscape) |
-| Sprint 2 — new representations + GP surrogate | ✅ Complete | plm_site, plm_physico, plm_concat, GPSurrogate; 64/64 tests; pushed to main |
-| Sprint 3 — HFPLMEncoder + analysis | 🔄 Next | ProtT5, Ankh, Profluent E1; plot_learning_curves.py crossover analysis |
+| Sprint 2 — new representations + GP surrogate | ✅ Complete | plm_site, plm_physico, plm_concat, GPSurrogate; pushed to main |
+| Sprint 2.5 — embed + benchmark hardening | ✅ Complete | rag-embed precomputes 4 PLM caches; GB1 separate wall time; surrogate-namespaced result paths; length-based PLM guard; 75/75 tests |
+| Sprint 3 — analysis + HFPLMEncoder | 🔄 Active | analyze synced 650M results (plot_results, crossover analysis); then ProtT5/Ankh/Profluent E1 |
 
-**Cluster runs pending (submitted/to-submit):**
-- Full RF benchmark on 8 datasets × 8 reprs × 5 acqs × 3 seeds (`submit_benchmark.sh`)
-- Targeted GP vs RF comparison on PABP + BLAT_Deng (`submit_gp_benchmark.sh`)
+**Cluster run status:**
+- ✅ Full RF 650M benchmark (8 datasets × up to 8 reprs × 5 acqs × 3 seeds) — **complete**;
+  results synced locally to `results/`. Old 8M prototype runs archived in `results_sprint1_8M/`.
+- ⏳ Targeted GP-only benchmark on PABP + BLAT_Deng (`submit_gp_benchmark.sh`) — to run; GP
+  results land in `_gp`-suffixed dirs and rsync into the same `results/` tree.
+
+**Current phase:** analyzing the synced 650M results (see `docs/agent_log.md` for latest).
 
 ---
 
@@ -270,9 +281,14 @@ Schema validation runs automatically when `ALDataset` is constructed.
 | `BLAT_ECOLX_Deng_2012` | 4,996 | 263 AA | PLM clearly wins; largest PLM gain |
 | `BLAT_ECOLX_Firnberg_2014` | 4,783 | 263 AA | Deceptive outlier (F58N); model-based < random |
 | `BLAT_ECOLX_Stiffler_2015` | ~2,000 | 263 AA | |
-| `PABP_YEAST_Melamed_2013` | ~21,000 | 75 AA | PABP anomaly — PLM underperforms mutation; RF miscalibrated on flat landscape; primary GP motivation |
-| `BRCA1_HUMAN_Findlay_2018` | ~4,000 | 1,863 AA | Non-PLM only (exceeds ESM-2 1022-residue limit) |
+| `PABP_YEAST_Melamed_2013` | 37,708 | 577 AA | PABP anomaly — PLM underperforms mutation; RF miscalibrated on flat landscape; primary GP motivation |
+| `BRCA1_HUMAN_Findlay_2018` | ~1,800 | 1,863 AA | Non-PLM only (exceeds ESM-2 1022-residue limit; auto-dropped by length probe) |
 | `GFP_AEQVI_Sarkisyan_2016` | ~51,000 | 238 AA | Multi-site (median ~4 muts) |
 | `SPG1_STRSG_Wu_2016` (GB1) | ~149,000 | 448 AA | 4-site combinatorial; canonical multi-site benchmark |
 
-**Next steps for data:** sync `data/curated/` to cluster via rsync before running benchmarks.
+`submit_benchmark.sh` length-probes each CSV (`max(len(mutated_sequence))`) and drops
+PLM reps when it exceeds the ESM-2 1022-residue limit — so BRCA1 (and any future long
+dataset) automatically runs mutation/physicochemical only.
+
+**Data status:** `data/curated/` synced to cluster; 650M embeddings computed; benchmark
+results synced back to `results/`.

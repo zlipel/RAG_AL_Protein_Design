@@ -503,12 +503,16 @@ leakage. Runner always passes `dataset.labeled_y`, which is guaranteed labeled-o
 
 **What it does**
 1. Loads dataset CSV
-2. Constructs `ESMEncoder` for each requested mode (mean, delta)
-3. Calls `encoder.transform(df)` — triggers computation and saves `.npy` cache
+2. For each requested mode, constructs the right encoder: `mean`/`delta`/`site` →
+   `ESMEncoder`; `physico` → `PLMPhysicoEncoder`
+3. Calls `encoder.transform(df)` — triggers computation and saves the
+   `{seq_hash → embedding}` pickle cache (distinct file per mode family)
 
-**Label access:** Dataset loaded with fitness, but `ESMEncoder` ignores fitness entirely.
+**Label access:** Dataset loaded with fitness, but the encoders ignore fitness entirely.
 
-**CLI flags:** `--dataset`, `--esm_model`, `--embed_batch_size`, `--modes`
+**CLI flags:** `--dataset`, `--esm_model`, `--embed_batch_size`,
+`--modes {mean,delta,site,physico}` (default: all four). Runs `mean` before `delta`
+so delta reuses the mean-pool cache and only computes the WT forward pass.
 
 ---
 
@@ -524,7 +528,9 @@ leakage. Runner always passes `dataset.labeled_y`, which is guaranteed labeled-o
 5. Builds surrogate via `_build_surrogate(cfg)` → `RFSurrogate` or `GPSurrogate`
 6. Builds acquisition via `_build_acquisition(cfg)`
 7. Calls `run_al_loop(...)` → `(results_df, selections_df)`
-8. Prepends metadata columns; writes `seed_<N>.csv` and `seed_<N>_selections.csv`
+8. Prepends metadata columns (`dataset, representation, acquisition, surrogate, seed`);
+   writes `seed_<N>.csv` and `seed_<N>_selections.csv` under a surrogate-namespaced
+   tag dir (`<repr>_<acq>[_b<beta>][_<surrogate>]`, suffix omitted for RF)
 
 **Label access:** Only via `ALDataset`'s authorized interface after construction.
 
@@ -538,22 +544,23 @@ leakage. Runner always passes `dataset.labeled_y`, which is guaranteed labeled-o
 
 ### `scripts/submit_embed.sh`
 
-SLURM batch script — 1 GPU, 2h, 32GB. Runs `rag-embed` for one dataset.
-Configure `DATASET`, `ESM_MODEL`, `EMBED_BATCH_SIZE` at top of file.
-Run once before benchmark sweep.
+SLURM batch script — 1 GPU, 2h, 32GB. Runs `rag-embed --modes mean delta site physico`
+for one dataset. `scripts/run_embed.sh` dispatches one job per PLM dataset and submits
+GB1 separately at a longer wall time (`GB1_WALLTIME`, default 8h) because it does three
+heavy forward passes over ~149K long sequences.
 
 ---
 
 ### `scripts/submit_benchmark.sh`
 
-SLURM array job — default 90 tasks (5 repr × 6 acq × 3 seeds).
-Array index decoded as:
-```
-repr_idx = TASK_ID / (N_ACQS * N_SEEDS)
-acq_idx  = (TASK_ID / N_SEEDS) % N_ACQS
-seed     = TASK_ID % N_SEEDS
-```
-Resources per task: 8 CPUs, 16GB, 4h.
+Runs all `(representation × acquisition × seed)` cells for **one** dataset on a single
+48-core node via **GNU parallel** (not a SLURM array). Grid: up to 8 reprs × 5 acqs × 3
+seeds. PLM reps are length-probed out when `max(len(mutated_sequence)) > 1022` (ESM-2
+limit). `scripts/run_benchmark.sh` dispatches one such job per dataset.
+
+`scripts/submit_gp_benchmark.sh` — GP-only targeted grid (PABP + BLAT_Deng); RF baseline
+comes from the main sweep. GP results write to `_gp`-suffixed dirs (via `paths._tag`), so
+they never overwrite RF results.
 
 ---
 
@@ -561,7 +568,10 @@ Resources per task: 8 CPUs, 16GB, 4h.
 
 Aggregates all `seed_*.csv` files under `results/<dataset>/`.
 Groups by `(representation, acquisition, round)` → mean ± std across seeds.
-Produces learning-curve PNG figures — one per metric per view
+Produces learning-curve PNG figures — one per metric per view.
+Metrics include `pool_spearman` (surrogate ranking accuracy on the hidden pool).
+**TODO (Sprint 3):** group by the new `surrogate` column too, so RF and GP curves
+don't blend once GP results exist.
 (`_by_acq.png` and `_by_repr.png`).
 
 ---

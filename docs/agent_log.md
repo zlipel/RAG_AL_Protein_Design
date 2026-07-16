@@ -3,6 +3,40 @@
 
 ---
 
+## 2026-07-15 — Milestone: 650M RF sweep complete; results synced; docs refreshed
+
+**Branches:** `fix/gitignore-results-backup`, `docs/session-progress-update`
+(both cut from `audit/agent-scaffold`).
+
+### Summary
+Operational milestone rather than a code feature. The full ESM-2 650M RF benchmark
+finished on the cluster and results were synced back locally. Prepared the repo for
+the analysis phase.
+
+- **Results archived + synced.** Renamed the old ESM-2 8M prototype results
+  (`results/`, 816 CSVs, dated 2026-06-26/28, pre-`surrogate`/`pool_spearman` schema)
+  to `results_sprint1_8M/`; `results/` now holds the 650M full grid. The result path
+  does not encode model size, so keeping them separate avoids silent overwrites.
+- **gitignore.** Added `results_*/` so model-tagged result backups can't be committed.
+- **Docs refreshed** to reflect the current state (this update): `CLAUDE.md` (test
+  count 75, embed 4-mode note, GP-only benchmark, Sprint status, PABP = 577 AA /
+  37,708 variants, length-based PLM guard), `docs/workflow.md` (current phase),
+  `docs/implementation_map.md` (embed dispatch, surrogate-namespaced paths, GNU-parallel
+  benchmark — corrected the stale "SLURM array job" description), `scripts/README.md`
+  (same array→parallel correction, 4-mode embed, GP-only benchmark, run_embed/run_benchmark).
+
+### Next steps (Sprint 3 — analysis)
+1. Analyze synced 650M results (`plot_results.py`; cross-dataset comparison).
+2. `plot_learning_curves.py` — crossover analysis (n_labeled where PLM beats mutation).
+3. Run + analyze the GP-only benchmark; add `surrogate` to plot grouping.
+4. Then `HFPLMEncoder`, low n_init sweep, ESM-2 size sweep.
+
+### Remaining concerns
+- `plot_results.py` still groups by (repr, acq) only — must add `surrogate` before
+  plotting GP vs RF (tracked in implementation_map.md and scripts/README.md).
+
+---
+
 ## 2026-07-15 — Benchmark safety: surrogate-namespaced results + length-based PLM guard
 
 **Branch:** `feature/benchmark-safety-guards` (cut from `audit/agent-scaffold`)
