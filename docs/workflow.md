@@ -64,29 +64,38 @@ All documented findings have been addressed.
 
 ---
 
-## Current State (as of 2026-07-14)
+## Current State (as of 2026-07-15)
 
-**Sprint 1 and Sprint 2 complete. Both merged to `main` and pushed.**
+**Sprint 1 + 2 complete; embed/benchmark hardening complete; 650M RF sweep done.**
 
 All original audit findings (Bugs #1–4, Gap #1, ESMEncoder performance) resolved.
 Sprint 2 delivered: `plm_site`, `plm_physico`, `plm_concat` representations;
 `pool_spearman` metric; `GPSurrogate` (ExactGP, warm-start, MLL patience).
 
-64/64 tests passing. `ruff check src/` clean.
+Post-Sprint-2 hardening (merged to `main` this week):
+- `rag-embed` precomputes all four PLM caches (mean/delta/site/physico); GB1
+  submitted separately at a longer wall time (`feature/embed-plm-modes`, `feature/gb1-embed-walltime`).
+- Result paths namespaced by surrogate (`_gp` suffix) + `surrogate` CSV column;
+  length-based PLM exclusion replaces the hardcoded BRCA1 check
+  (`feature/benchmark-safety-guards`). `results_*/` gitignored.
+
+75/75 tests passing. `ruff check src/` clean.
 
 **Active branches:**
-- `main` — current production state, all Sprint 2 work merged
-- `audit/agent-scaffold` — integration branch, also up to date with main
+- `main` / `audit/agent-scaffold` — in sync, all work above merged and pushed.
 
-**Cluster runs pending:**
-- Full RF benchmark: `submit_benchmark.sh` (8 reprs × 5 acqs × 3 seeds × 8 datasets)
-- Targeted GP: `submit_gp_benchmark.sh` (PABP + BLAT_Deng, RF vs GP paired)
+**Cluster / results status:**
+- ✅ Full RF 650M benchmark complete; synced to `results/`. Old 8M runs archived
+  in `results_sprint1_8M/`.
+- ⏳ GP-only benchmark (`submit_gp_benchmark.sh`, PABP + BLAT_Deng) — to run.
 
-**Next feature work (Sprint 3):**
-1. `HFPLMEncoder` — ProtT5, Ankh, Profluent E1 in `src/rag_al/representations/hf_plm.py`
-2. `plot_learning_curves.py` — crossover analysis (when does PLM beat mutation?)
-3. Low n_init sweep — gated on crossover analysis findings
-4. ESM-2 size sweep (8M / 150M / 650M) — config-only once embed jobs run
+**Current phase — Sprint 3 analysis:**
+1. Analyze the synced 650M results: `plot_results.py` per dataset; cross-dataset
+   heatmaps; confirm/refine Sprint 1 findings (PABP anomaly, BLAT_Deng PLM gain).
+2. `plot_learning_curves.py` — crossover analysis (x-axis n_labeled: when does PLM
+   beat mutation?). Reads existing results; no new cluster runs.
+3. Run + analyze the GP benchmark; add `surrogate` to plot grouping.
+4. Then: `HFPLMEncoder` (ProtT5, Ankh, Profluent E1); low n_init sweep; ESM-2 size sweep.
 
 Start new feature work from `audit/agent-scaffold`:
 ```bash

@@ -5,72 +5,78 @@ standalone scripts that sit outside the Python package.
 
 ---
 
-## submit_embed.sh
+## submit_embed.sh  (+ run_embed.sh)
 
-SLURM batch script for pre-computing ESM-2 embeddings on a GPU node.
+SLURM batch script for pre-computing PLM embeddings on a GPU node. Takes the
+dataset as a positional arg: `sbatch scripts/submit_embed.sh <DATASET>`.
 
 ### Resources requested
 - 1 GPU (A100 on Della; adjust #SBATCH --gres for Tiger H100)
 - 8 CPUs, 32GB memory
-- 2 hour time limit
+- 2 hour time limit (override per-job with `sbatch --time=...`)
 
-### What to configure before submitting
-At the top of the script, set:
-    DATASET         — dataset name (must match a CSV in data/)
-    ESM_MODEL       — HuggingFace model ID for ESM-2
-    EMBED_BATCH_SIZE — sequences per forward pass (64 is good for A100)
+### What it computes
+Runs `rag-embed --modes mean delta site physico`, precomputing every PLM cache
+the benchmark grid needs. Each mode family writes a distinct file under
+`data/embeddings/<dataset>/`:
+- `cache_{model}.pkl` — mean/delta (also serves plm_retrieval, plm_concat)
+- `cache_{model}_site.pkl` — site
+- `cache_{model}_physico.pkl` — physico
 
-Also update the module load and conda activate lines to match your
-cluster environment.
+Set `ESM_MODEL` / `EMBED_BATCH_SIZE` at the top; update module/conda lines for
+your cluster. Run ONCE per dataset before the benchmark sweep.
 
-### Submit
-    sbatch scripts/submit_embed.sh
+### Submit all PLM datasets at once
+    bash scripts/run_embed.sh
 
-Run this ONCE per dataset before submitting the benchmark sweep. The
-embeddings are saved to data/embeddings/<dataset>/ and reused by all
-subsequent benchmark runs.
+Loops the 6 smaller PLM datasets at the default 2h and submits **GB1**
+(`SPG1_STRSG_Wu_2016`) separately at 8h — it does 3 heavy forward passes over
+~149K long sequences. Override with `GB1_WALLTIME=12:00:00 bash scripts/run_embed.sh`.
+BRCA1 is excluded (WT 1863 AA > ESM-2 limit).
 
 ---
 
-## submit_benchmark.sh
+## submit_benchmark.sh  (+ run_benchmark.sh)
 
-SLURM array job that sweeps all (representation × acquisition × seed)
-combinations in parallel. Each array task is one cell of the grid.
+Runs all `(representation × acquisition × seed)` cells for **one** dataset on a
+single 48-core node via **GNU parallel** (not a SLURM array). Falls back to
+`run_local.py` if GNU parallel is unavailable.
 
-### Array job layout
-Default grid: 5 representations × 6 acquisitions × 3 seeds = 90 tasks
-    #SBATCH --array=0-89
+### Grid
+Up to 8 representations × 5 acquisitions × 3 seeds. PLM reps are **auto-dropped**
+for any dataset whose `max(len(mutated_sequence)) > 1022` (ESM-2 limit) — probed
+from the CSV at submit time, so BRCA1 (and any future long dataset) runs only
+mutation/physicochemical.
 
-Each task's array index is decoded as:
-    repr_idx = TASK_ID / (N_ACQS * N_SEEDS)
-    acq_idx  = (TASK_ID / N_SEEDS) % N_ACQS
-    seed     = TASK_ID % N_SEEDS
+### Resources
+- 48 CPUs, 64GB, 4h per dataset job (no GPU — embeddings are cache hits)
 
-So tasks 0-2 are (mutation, random, seeds 0-2), tasks 3-5 are
-(mutation, greedy, seeds 0-2), and so on.
+### What to configure
+`N_ROUNDS`, `BATCH_SIZE`, `N_SEEDS`, `N_INIT`, `UCB_BETA`, `ESM_MODEL` at the top
+(should match the embed job). Pass the dataset as a positional arg.
 
-### Resources per task
-- 8 CPUs (for RandomForest n_jobs=-1), 16GB memory, 4 hours
-
-### What to configure before submitting
-At the top of the script, set:
-    DATASET     — must match a CSV in data/
-    N_ROUNDS    — AL rounds per run (default: 5)
-    BATCH_SIZE  — variants acquired per round (default: 20)
-    N_SEEDS     — seeds per (repr, acq) combination (default: 3)
-    ESM_MODEL   — should match the model used in submit_embed.sh
-
-To run a smaller test sweep (e.g., just 4 repr × 4 acq × 1 seed = 16 tasks),
-adjust the REPRS and ACQS arrays and set --array=0-15.
-
-### Submit (after embed job completes)
-    sbatch scripts/submit_benchmark.sh
+### Submit
+    sbatch scripts/submit_benchmark.sh <DATASET>   # one dataset
+    bash   scripts/run_benchmark.sh                # all datasets, one job each
 
 ### Checking progress
-    squeue -u $USER                      # see running tasks
-    cat logs/bench_<JOBID>_<TASKID>.out  # see output for one task
+    squeue -u $USER
+    cat logs/bench_<JOBID>_<JOBNAME>.out
 
-Results appear in results/<dataset>/<tag>/seed_<N>.csv as each task finishes.
+Results appear in `results/<dataset>/<tag>/seed_<N>.csv`, where
+`<tag> = <repr>_<acq>[_b<beta>][_<surrogate>]` (surrogate suffix omitted for RF).
+
+---
+
+## submit_gp_benchmark.sh
+
+Targeted **GP-only** benchmark: `GPSurrogate` on PABP + BLAT_Deng (3 reprs × 2
+acqs × 3 seeds = 36 cells). Motivated by the PABP calibration anomaly. The RF
+baseline for the same cells comes from the main sweep, so RF is **not** re-run
+here; GP results land in `_gp`-suffixed dirs and never overwrite RF. The same
+length-based PLM guard applies, so it's safe to extend `DATASETS`/`REPRS`.
+
+    sbatch scripts/submit_gp_benchmark.sh
 
 ---
 
@@ -82,7 +88,7 @@ cluster.
 
 ### What it produces
 For each metric (best_fitness, simple_regret, topk10_recall, topk50_recall,
-batch_mean_fitness), it generates two figures:
+batch_mean_fitness, pool_spearman), it generates two figures:
 
 1. <metric>_by_acq.png
    One subplot per acquisition function. Each subplot shows all
@@ -106,10 +112,16 @@ batch_mean_fitness), it generates two figures:
 
 ### How aggregation works
 The script finds all files matching results/<dataset>/**/seed_*.csv,
-reads the dataset, representation, acquisition, and seed columns written
-by rag-benchmark, and groups by (representation, acquisition, round) to
+reads the dataset, representation, acquisition, surrogate, and seed columns
+written by rag-benchmark, and groups by (representation, acquisition, round) to
 compute mean and std across seeds. Shaded bands show ±1 std.
 
+> **Sprint 3 TODO:** the grouping does not yet include `surrogate`, so once GP
+> results exist it would blend RF and GP curves for the same (repr, acq). Add
+> `surrogate` to the group keys before plotting GP-vs-RF comparisons.
+
 ### Syncing results from cluster
-    rsync -av della:/path/to/RAG_AL_Protein_Design/results/ ./results/
-    python scripts/plot_results.py --dataset BLAT_ECOLX
+    # results/ and results_*/ are gitignored. The current results/ holds the
+    # 650M full grid; old 8M prototypes live in results_sprint1_8M/.
+    rsync -avz <cluster>:<proj>/results/ ./results/
+    python scripts/plot_results.py --dataset BLAT_ECOLX_Deng_2012
