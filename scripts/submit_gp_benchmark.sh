@@ -2,13 +2,11 @@
 #SBATCH --job-name=rag_gp
 #SBATCH --output=logs/gp_%j_%x.out
 #SBATCH --error=logs/gp_%j_%x.err
-#SBATCH --time=08:00:00
+#SBATCH --time=01:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
-# No GPU requested — GP runs on CPU for the embedding sizes in this study.
-# Increase to --gres=gpu:1 and set gp_device=cuda if training becomes a bottleneck.
+#SBATCH --exclusive
+# Whole node; GP runs on CPU. Each cell runs as its own srun --exclusive step
+# with a per-cell memory cap (MEM_PER_CELL below).
 
 # -----------------------------------------------------------------------
 # Targeted GP surrogate benchmark: runs GPSurrogate on the datasets and
@@ -48,7 +46,12 @@ N_INIT=50
 UCB_BETA=1.0
 ESM_MODEL="facebook/esm2_t33_650M_UR50D"
 ESM_MAX_RESIDUES=1022    # drop PLM reps for datasets exceeding this
-WORKERS=${SLURM_CPUS_PER_TASK:-16}
+
+# Per-cell srun step resources. 1 core each (single-threaded); 8 GB covers the
+# heaviest cell in this grid. Raise MEM_PER_CELL for larger pools.
+MEM_PER_CELL="${MEM_PER_CELL:-8G}"
+CPUS_PER_CELL="${CPUS_PER_CELL:-1}"
+MAX_CONCURRENT="${MAX_CONCURRENT:-${SLURM_CPUS_ON_NODE:-$(nproc 2>/dev/null || echo 4)}}"
 
 # GP hyperparameters — defaults match GPSurrogate.__init__
 GP_N_ITER=200
@@ -73,13 +76,22 @@ RESULTS_DIR="${PROJECT_ROOT}/results"
 
 export HF_HUB_OFFLINE=1
 
+# One BLAS/OMP thread per cell (each cell gets 1 core). torch reads these at import.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+export TOKENIZERS_PARALLELISM=false
+
 echo "============================================"
 echo "Job: ${SLURM_JOB_ID:-local}   Node: ${SLURMD_NODENAME:-local}"
 echo "Datasets: ${DATASETS[*]}"
 echo "Reprs:    ${REPRS[*]}"
 echo "Acqs:     ${ACQS[*]}"
 echo "Surrogates: ${SURROGATES[*]}"
-echo "n_rounds=$N_ROUNDS  batch_size=$BATCH_SIZE  n_seeds=$N_SEEDS  workers=$WORKERS"
+echo "n_rounds=$N_ROUNDS  batch_size=$BATCH_SIZE  n_seeds=$N_SEEDS"
+echo "Per cell: cpus=$CPUS_PER_CELL mem=$MEM_PER_CELL   max_concurrent=$MAX_CONCURRENT"
 echo "Project root: $PROJECT_ROOT"
 echo "============================================"
 
@@ -124,15 +136,36 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 N_CELLS=${#CMDS[@]}
-echo "Submitting $N_CELLS cells with $WORKERS workers"
+echo "Dispatching $N_CELLS cells (up to $MAX_CONCURRENT at once)"
 
-if command -v parallel &>/dev/null; then
-    printf '%s\n' "${CMDS[@]}" | parallel --jobs "$WORKERS" --halt soon,fail=1
-else
-    echo "GNU parallel not found — falling back to sequential execution"
-    for cmd in "${CMDS[@]}"; do
-        eval "$cmd"
-    done
-fi
+# Run one cell. Under SLURM it becomes its own srun step with an isolated core
+# and memory cgroup; off SLURM it is a plain subshell.
+run_cell() {
+    if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v srun &>/dev/null; then
+        srun --exclusive --ntasks=1 --cpus-per-task="$CPUS_PER_CELL" \
+             --mem="$MEM_PER_CELL" bash -c "$1"
+    else
+        bash -c "$1"
+    fi
+}
 
-echo "GP benchmark complete."
+RC_DIR="$(mktemp -d)"
+trap 'rm -rf "$RC_DIR"' EXIT
+
+idx=0
+for cmd in "${CMDS[@]}"; do
+    while (( $(jobs -rp | wc -l) >= MAX_CONCURRENT )); do sleep 2; done
+    ( set +e; run_cell "$cmd"; echo $? > "${RC_DIR}/${idx}" ) &
+    idx=$((idx + 1))
+done
+wait
+
+FAILED=0
+for f in "${RC_DIR}"/*; do
+    rc=$(cat "$f")
+    if [[ "$rc" != "0" ]]; then
+        FAILED=$((FAILED + 1))
+        echo "  FAILED (rc=${rc}): ${CMDS[${f##*/}]}" >&2
+    fi
+done
+echo "GP benchmark: $((N_CELLS - FAILED))/${N_CELLS} cells succeeded."
