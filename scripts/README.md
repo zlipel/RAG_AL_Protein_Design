@@ -76,6 +76,12 @@ baseline for the same cells comes from the main sweep, so RF is **not** re-run
 here; GP results land in `_gp`-suffixed dirs and never overwrite RF. The same
 length-based PLM guard applies, so it's safe to extend `DATASETS`/`REPRS`.
 
+Runs on CPU. Requests a whole node (`--exclusive`) and launches each cell as its
+own `srun --exclusive` step with a per-cell memory cgroup, so a cell that OOMs is
+killed in isolation rather than taking down the grid, and `sacct` reports per-cell
+usage. Env-overridable knobs: `MEM_PER_CELL` (default `8G` — raise for larger
+pools), `CPUS_PER_CELL` (default `1`), `MAX_CONCURRENT` (default = node cores).
+
     sbatch scripts/submit_gp_benchmark.sh
 
 ---
