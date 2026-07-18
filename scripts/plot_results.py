@@ -19,7 +19,6 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -34,6 +33,9 @@ _REPR_COLORS = {
     "physicochemical":"#F28E2B",
     "plm_mean":       "#E15759",
     "plm_delta":      "#76B7B2",
+    "plm_site":       "#B07AA1",
+    "plm_physico":    "#EDC948",
+    "plm_concat":     "#9C755F",
     "plm_retrieval":  "#59A14F",
 }
 
@@ -42,6 +44,9 @@ _REPR_LABELS = {
     "physicochemical":"Physicochemical",
     "plm_mean":       "PLM mean-pool",
     "plm_delta":      "PLM delta",
+    "plm_site":       "PLM site",
+    "plm_physico":    "PLM + physico (per-res)",
+    "plm_concat":     "PLM ⊕ physico (concat)",
     "plm_retrieval":  "PLM + retrieval",
 }
 
@@ -107,6 +112,7 @@ def plot_metric_by_acquisition(
     acquisitions: list[str],
     output_dir: Path,
     dataset: str,
+    suffix: str = "",
 ) -> None:
     """
     One subplot per acquisition function; representations are different lines.
@@ -157,7 +163,7 @@ def plot_metric_by_acquisition(
     fig.suptitle(f"{dataset} — {ylabel}", y=1.02, fontsize=13, fontweight="bold")
     fig.tight_layout()
 
-    fname = output_dir / f"{dataset}_{metric}_by_acq.png"
+    fname = output_dir / f"{dataset}_{metric}{suffix}_by_acq.png"
     fig.savefig(fname, dpi=150, bbox_inches="tight")
     print(f"Saved: {fname}")
     plt.close(fig)
@@ -170,6 +176,7 @@ def plot_metric_by_representation(
     representations: list[str],
     output_dir: Path,
     dataset: str,
+    suffix: str = "",
 ) -> None:
     """
     One subplot per representation; acquisition functions are different lines.
@@ -222,7 +229,7 @@ def plot_metric_by_representation(
     fig.suptitle(f"{dataset} — {ylabel}", y=1.02, fontsize=13, fontweight="bold")
     fig.tight_layout()
 
-    fname = output_dir / f"{dataset}_{metric}_by_repr.png"
+    fname = output_dir / f"{dataset}_{metric}{suffix}_by_repr.png"
     fig.savefig(fname, dpi=150, bbox_inches="tight")
     print(f"Saved: {fname}")
     plt.close(fig)
@@ -239,11 +246,25 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, type=str)
     parser.add_argument("--results_dir", type=Path, default=Path("results"))
     parser.add_argument("--output_dir", type=Path, default=Path("figures"))
+    parser.add_argument(
+        "--surrogate", type=str, default="rf",
+        help="Surrogate to plot: 'rf' (default) or 'gp'. Filters the CSVs so "
+             "RF and GP curves for the same cell are never blended.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_all_results(args.results_dir, args.dataset)
+    if "surrogate" not in df.columns:        # legacy CSVs predate the column
+        df["surrogate"] = "rf"
+    df = df[df["surrogate"] == args.surrogate]
+    if df.empty:
+        raise SystemExit(
+            f"No '{args.surrogate}' results for {args.dataset}."
+        )
+    # keep RF (default) filenames stable; tag GP/other explicitly
+    suffix = "" if args.surrogate == "rf" else f"_{args.surrogate}"
 
     acquisitions = sorted(df["acquisition"].unique())
     representations = sorted(df["representation"].unique())
@@ -262,10 +283,10 @@ def main() -> None:
             print(f"Skipping {metric} — column not found.")
             continue
         plot_metric_by_acquisition(
-            df, metric, ylabel, acquisitions, args.output_dir, args.dataset
+            df, metric, ylabel, acquisitions, args.output_dir, args.dataset, suffix
         )
         plot_metric_by_representation(
-            df, metric, ylabel, representations, args.output_dir, args.dataset
+            df, metric, ylabel, representations, args.output_dir, args.dataset, suffix
         )
 
     print(f"\nAll figures saved to {args.output_dir}/")

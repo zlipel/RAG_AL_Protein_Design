@@ -3,6 +3,190 @@
 
 ---
 
+## 2026-07-18 — GB1 RF rerun complete; Sprint 1/2 results docs + figures
+
+### Task summary
+The GB1 (`SPG1_STRSG_Wu_2016`) RF rerun completed and synced — now a full 8-rep grid
+(120 CSVs), replacing the earlier partial/broken data (`plm_delta` was random-only,
+regret 3.6). Wrote two numbers-backed results docs and generated supporting figures.
+
+### GB1 now complete — sharpest PLM win in the sweep
+Final-round `topk10_recall` (mean over acqs & seeds): mutation **0.153**, physico 0.393,
+PLM **0.64–0.79** (`plm_retrieval` 0.793; best cell `plm_site × ucb` = 1.000). Every PLM
+rep reaches `simple_regret = 0` (finds the 4-site optimum); mutation stays 1.15–1.92.
+Confirms the PLM advantage scales with multi-site/epistatic complexity.
+
+Grid completeness now: **6 of 8 datasets full 8-rep** (4 BLAT + PABP + GB1). GFP still
+5-rep (site/physico/concat pending) — provisional; BRCA1 2-rep by design. This resolves
+the GB1 half of the "GFP + GB1 incomplete" caveat in the 2026-07-15 analysis entry.
+
+### Files changed
+- `docs/sprint1_results.md` (new) — core 5-rep benchmark: PLM ≫ hand-crafted,
+  `plm_retrieval` best, per-dataset table, PABP anomaly, Firnberg 8M→650M reversal.
+- `docs/sprint2_results.md` (new) — Sprint-2 reps competitive-not-superior (with the
+  completeness confound), GB1 multi-site win, `pool_spearman` locating the PABP
+  top-of-landscape failure, GP status.
+- `docs/figures/*` (generated via `plot_aggregate.py` / `plot_results.py`, restricted to
+  the complete datasets): topk10 heatmap + per-dataset bar; pool_spearman; PABP/GB1/Deng
+  learning curves.
+
+### Remaining
+- Run the GP grid; full GFP re-run (task queue).
+
+---
+
+## 2026-07-18 — GP benchmark deploy: srun-isolated cells, right-sized memory
+
+### Task summary
+The GP-only sweep OOM'd on the cluster (`sacct State=OUT_OF_MEMORY, ExitCode 0:125,
+MaxRSS ≈ 33.5 GB` against `--mem=32G`). Reworked `scripts/submit_gp_benchmark.sh` to
+run each cell as an isolated `srun --exclusive` step under a whole-node allocation,
+replacing the single shared-cgroup GNU-parallel design.
+
+### Root cause (it was memory, not threads)
+Not a large model or expensive inference. 16 concurrent cells shared one 32 GB
+allocation cgroup; a few PABP `plm_*` cells (~2–2.5 GB each) pushed the total past
+32 GB and the OOM-killer took down whatever was resident — including tiny 49-dim
+`mutation` cells (collateral kills, which is why even those "failed"). An earlier
+thread-oversubscription theory was wrong; `sacct` settled it.
+
+### Why RF survived and GP didn't (same AL loop)
+Both do encode → fit on revealed data → predict over the full pool → acquire; the
+encoder cost is identical. Three differences:
+1. torch/gpytorch base ≈ 0.4–0.5 GB/process vs sklearn ≈ 0.15 GB.
+2. GP `predict()` forms cross-covariance K(pool, train) ≈ 0.4 GB/round (RF's
+   tree-averaging has no analog); GNU-parallel cells run in lock-step so the spikes
+   coincide.
+3. The GP job requested **half** the memory: RF = 64 GB / 48 cores; GP = 32 GB / 16.
+So RF peaked ~49 GB < 64; GP peaked ~33.5 GB > 32. Same logic, heavier runtime,
+lower budget.
+
+### srun --exclusive vs GNU parallel (decision)
+GNU parallel runs all cells in one allocation cgroup, so one cell's OOM can kill
+siblings (the failure here). `srun --exclusive` gives each cell its own core + memory
+cgroup → an OOM is contained to that cell, with per-cell `sacct` accounting. Chose
+srun. (GNU parallel's edge is ergonomics/portability, not relevant on-cluster.)
+
+### Files changed
+- `scripts/submit_gp_benchmark.sh` — sbatch `--nodes=1 --exclusive` (was
+  `--cpus-per-task=16 --mem=32G`); per-cell `srun --exclusive --mem=$MEM_PER_CELL`
+  steps with a `MAX_CONCURRENT` throttle + per-cell exit-code summary, replacing the
+  GNU-parallel dispatch; OMP/BLAS threads pinned to 1. Knobs: `MEM_PER_CELL=8G`,
+  `CPUS_PER_CELL=1`, `MAX_CONCURRENT`=node cores. Grid unchanged (PABP + BLAT_Deng ×
+  {mutation, plm_mean, plm_physico} × {greedy, ucb} × 3 seeds = 36 cells; no GB1).
+- `scripts/README.md` — GP section updated (srun isolation + memory knobs).
+
+### Verification
+- `bash -n scripts/submit_gp_benchmark.sh` clean.
+- Dispatch harness simulated locally (true/false stand-in cells): throttle, per-cell
+  rc capture, failure count, and `set -e` safety all correct (reported 2/4 on a
+  deliberate 2-failure case).
+- Confirmed the paired RF baseline for all 36 cells already exists in `results/`
+  (main sweep ran all reps/acqs on both datasets) → GP-vs-RF is directly comparable.
+
+### Remaining
+- Submit on cluster; compare GP vs RF (topk10 + pool_spearman), focused on PABP's
+  top-of-landscape calibration.
+
+---
+
+## 2026-07-15 — 650M full-grid analysis (RF): findings + surrogate/repr-aware plotting
+
+**Branch:** `feature/analysis-650m` (cut from `audit/agent-scaffold`).
+
+### Task summary
+Analyzed the synced ESM-2 650M RF benchmark (741 seed CSVs, 8 datasets) and amended
+the analysis scripts to match the richer grid. `plot_aggregate.py` / `plot_results.py`
+predated the Sprint-2 representations (`plm_site`, `plm_physico`, `plm_concat`) and the
+`surrogate` axis, so both were silently dropping the new reps and would have blended
+RF/GP. Now they know all 8 reps, filter by `--surrogate` (default `rf`), and the
+aggregate script gained a `--no_plots` table mode and a `--datasets` subset filter used
+for the fair comparison below.
+
+### Grid completeness (important caveat)
+- **Full 8-rep grid:** 4× BLAT (Deng, Firnberg, Jacquier, Stiffler) + PABP.
+- **BRCA1:** 2 non-PLM reps only (WT 1863 AA > ESM-2 limit) — correct; saturates at 1.0.
+- **GFP:** only the 5 original reps (missing `plm_site`/`plm_physico`/`plm_concat`).
+- **GB1 (SPG1):** PLM grid partial/failed — `plm_delta` is random-only (mean
+  simple_regret 3.6), `plm_mean_retrieval_ucb` has 0 seeds, several 1-seed cells.
+- ⇒ **GFP + GB1 numbers are provisional**; they need a full Sprint-2-grid re-run before
+  any multi-site conclusion. All cross-rep comparisons below are on the 5 complete datasets.
+
+### Key findings (topk10_recall, final round, ESM-2 650M, RF)
+
+**Q1 — best representation (fair comparison, 5 fully-gridded datasets):**
+
+| repr | random | greedy | ucb | div_ucb | ret_ucb | **MEAN** |
+|---|---|---|---|---|---|---|
+| plm_retrieval | 0.567 | 0.867 | **0.920** | 0.887 | 0.867 | **0.821** |
+| plm_delta | 0.567 | 0.860 | 0.893 | 0.873 | 0.893 | 0.817 |
+| plm_physico | 0.567 | 0.853 | 0.873 | 0.873 | 0.860 | 0.805 |
+| plm_site | 0.567 | 0.833 | 0.860 | 0.900 | 0.853 | 0.803 |
+| plm_mean | 0.567 | 0.860 | 0.847 | 0.840 | 0.893 | 0.801 |
+| plm_concat | 0.567 | 0.833 | 0.867 | 0.853 | 0.867 | 0.797 |
+| mutation | 0.567 | 0.800 | 0.840 | 0.853 | 0.833 | 0.779 |
+| physicochemical | 0.567 | 0.633 | 0.640 | 0.573 | 0.633 | 0.609 |
+
+All six PLM variants cluster at **0.80–0.82 (within seed noise)**, above mutation
+(0.779) and well above physicochemical (0.609). **The Sprint-2 reps (site/physico/concat)
+do NOT beat the Sprint-1 reps on equal footing** — the naive all-8-dataset aggregate that
+appeared to rank them on top was a completeness artifact (they skip GFP/GB1, which have
+recall ≈ 0.2 and drag the older reps' means down). Sprint 1's headline replicates at 650M:
+**PLM ≫ non-PLM; `plm_retrieval` marginally the strongest single variant.** (Sanity check:
+`random` gives an identical 0.567 for every rep, as expected — random selection ignores
+the surrogate, so recall is representation-independent.)
+
+**Q2 — where PLM helps / fails:**
+- **Largest PLM gain — BLAT_Deng:** physico 0.42 / mutation 0.68 → PLM ~0.85–0.90. Confirmed.
+- **Saturation:** Jacquier (all reps 1.000) and BRCA1 (non-PLM 1.000) are too easy to
+  discriminate at this budget — uninformative for ranking reps.
+- **PABP anomaly — confirmed and sharpened.** topk10: mutation **0.507** > every PLM
+  (best `plm_retrieval`/`plm_delta` ≈ 0.40–0.41). But `pool_spearman` is the *opposite*:
+  PLM **0.61–0.64** > mutation 0.517. So with PLM features the surrogate ranks the *bulk*
+  of the pool better yet recalls the true **top-10 worse** — the failure is localized to
+  the **top of the landscape**, not global rank. This is the precise, concrete motivation
+  for the GP surrogate (tail/uncertainty calibration), not just "PLM is worse on PABP."
+
+**Q3 — retrieval augmentation:** `plm_retrieval` is the strongest single PLM variant on
+the fair subset (0.821) and the clear winner on **Firnberg** (topk10 0.933; mean
+simple_regret 0.16 vs mutation 1.04). **Firnberg update:** the 8M "deceptive-outlier"
+pathology (all model-based methods stuck at regret 1.1995, never finding F58N) does **not**
+replicate at 650M — higher-capacity embeddings + retrieval locate the isolated optimum.
+Worth a per-seed confirmation, but a notable reversal from the Sprint-1 (8M) conclusion.
+
+**Acquisition / metric interpretation:** `random` yields the *lowest* topk10 (~0.567) but
+the *highest* pool_spearman for every rep (e.g. plm_site: random 0.732 vs greedy 0.432) —
+a clean exploration/exploitation signature. Unbiased sampling → best global rank
+correlation but worst top-k discovery; `ucb`/`retrieval_ucb` → best top-k. Confirms
+**topk_recall (not pool_spearman) is the right primary objective** for the "find the best
+variant" goal.
+
+**Surrogate:** every synced cell is RF (`surrogate` column uniformly `rf`); the GP grid is
+not yet run. The PABP top-vs-global split above is the specific case GP is meant to fix.
+
+### Files changed
+- `scripts/plot_aggregate.py` — added `plm_site`/`plm_physico`/`plm_concat` to
+  `_REPR_ORDER`/`_REPR_LABELS`; `final_round_metric` now groups by `surrogate`;
+  `main` gained `--surrogate` (`rf`|`gp`|`all`), `--no_plots` (print tables only),
+  `--datasets` (subset filter); figures get a `_<surrogate>` suffix for non-RF.
+- `scripts/plot_results.py` — colors/labels for the 3 new reps; `--surrogate` filter
+  (default `rf`) so RF/GP curves never blend; `_<surrogate>` filename suffix; removed
+  unused `numpy` import.
+
+### Verification
+- `ruff check scripts/plot_aggregate.py scripts/plot_results.py` → clean.
+- Regenerated `figures/aggregate/` (all 8 reps now appear) and confirmed `--no_plots`
+  and `--datasets` produce the tables above. (Figures are gitignored.)
+
+### Remaining concerns / next steps
+1. **Re-run GFP + GB1 on the full Sprint-2 grid** — site/physico/concat missing on both;
+   GB1's PLM cells are partial/failed. No multi-site conclusion until then.
+2. **Run the GP grid** (`submit_gp_benchmark.sh`, PABP + BLAT_Deng); compare topk10 *and*
+   pool_spearman vs RF, focusing on the top of the PABP landscape.
+3. `plot_learning_curves.py` (n_labeled crossover) still to build.
+
+---
+
 ## 2026-07-15 — Milestone: 650M RF sweep complete; results synced; docs refreshed
 
 **Branches:** `fix/gitignore-results-backup`, `docs/session-progress-update`
