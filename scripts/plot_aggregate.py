@@ -31,7 +31,11 @@ from scipy import stats
 
 sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
 
-_REPR_ORDER = ["mutation", "physicochemical", "plm_mean", "plm_delta", "plm_retrieval"]
+_REPR_ORDER = [
+    "mutation", "physicochemical",
+    "plm_mean", "plm_delta", "plm_site",
+    "plm_physico", "plm_concat", "plm_retrieval",
+]
 _ACQ_ORDER  = ["random", "greedy", "ucb", "diversity_ucb", "retrieval_ucb"]
 
 _REPR_LABELS = {
@@ -39,6 +43,9 @@ _REPR_LABELS = {
     "physicochemical": "Physico-\nchem",
     "plm_mean":        "PLM\nmean",
     "plm_delta":       "PLM\ndelta",
+    "plm_site":        "PLM\nsite",
+    "plm_physico":     "PLM+\nphysico",
+    "plm_concat":      "PLM\nconcat",
     "plm_retrieval":   "PLM +\nretrieval",
 }
 _ACQ_LABELS = {
@@ -102,16 +109,18 @@ def compute_difficulty(data_dir: Path) -> pd.DataFrame:
 
 def final_round_metric(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     """
-    For each (dataset, representation, acquisition, seed), extract the
-    final-round value of *metric*.
+    For each (dataset, representation, acquisition, surrogate, seed), extract the
+    final-round value of *metric*. Grouping includes ``surrogate`` so RF and GP
+    runs of the same cell are never conflated.
     """
+    keys = ["dataset", "representation", "acquisition", "surrogate", "seed"]
     last_round = (
-        df.groupby(["dataset", "representation", "acquisition", "seed"])["round"]
+        df.groupby(keys)["round"]
         .max()
         .reset_index()
         .rename(columns={"round": "last_round"})
     )
-    merged = df.merge(last_round, on=["dataset", "representation", "acquisition", "seed"])
+    merged = df.merge(last_round, on=keys)
     return merged[merged["round"] == merged["last_round"]].copy()
 
 
@@ -123,6 +132,7 @@ def plot_heatmap(
     final_df: pd.DataFrame,
     metric: str,
     output_dir: Path,
+    suffix: str = "",
 ) -> None:
     reprs = [r for r in _REPR_ORDER if r in final_df["representation"].unique()]
     acqs  = [a for a in _ACQ_ORDER  if a in final_df["acquisition"].unique()]
@@ -159,7 +169,7 @@ def plot_heatmap(
     ax.tick_params(axis="y", rotation=0)
     fig.tight_layout()
 
-    fname = output_dir / f"aggregate_{metric}_heatmap.png"
+    fname = output_dir / f"aggregate_{metric}{suffix}_heatmap.png"
     fig.savefig(fname, dpi=150, bbox_inches="tight")
     print(f"Saved: {fname}")
     plt.close(fig)
@@ -174,6 +184,7 @@ def plot_repr_by_difficulty(
     difficulty_df: pd.DataFrame,
     metric: str,
     output_dir: Path,
+    suffix: str = "",
 ) -> None:
     merged = final_df.merge(
         difficulty_df[["dataset", "fitness_std"]],
@@ -249,7 +260,7 @@ def plot_repr_by_difficulty(
     )
     fig.tight_layout()
 
-    fname = output_dir / f"aggregate_{metric}_repr_by_difficulty.png"
+    fname = output_dir / f"aggregate_{metric}{suffix}_repr_by_difficulty.png"
     fig.savefig(fname, dpi=150, bbox_inches="tight")
     print(f"Saved: {fname}")
     plt.close(fig)
@@ -264,6 +275,7 @@ def plot_per_dataset_bar(
     difficulty_df: pd.DataFrame,
     metric: str,
     output_dir: Path,
+    suffix: str = "",
 ) -> None:
     """
     One group of bars per dataset (sorted by fitness_std), each bar a
@@ -319,10 +331,55 @@ def plot_per_dataset_bar(
     ax.legend(loc="upper left", fontsize=8, frameon=False)
     fig.tight_layout()
 
-    fname = output_dir / f"aggregate_{metric}_per_dataset.png"
+    fname = output_dir / f"aggregate_{metric}{suffix}_per_dataset.png"
     fig.savefig(fname, dpi=150, bbox_inches="tight")
     print(f"Saved: {fname}")
     plt.close(fig)
+
+
+# ------------------------------------------------------------------
+# Text summaries (inspect the numbers without generating figures)
+# ------------------------------------------------------------------
+
+def print_summary_tables(final_df: pd.DataFrame, metric: str) -> None:
+    """
+    Print the aggregated final-round *metric* as plain tables:
+      1. representation x acquisition, averaged across datasets & seeds
+      2. dataset x representation, averaged across acquisitions & seeds
+      3. per-dataset best (representation, acquisition) cell
+    """
+    reprs = [r for r in _REPR_ORDER if r in final_df["representation"].unique()]
+    acqs  = [a for a in _ACQ_ORDER  if a in final_df["acquisition"].unique()]
+
+    print("\n" + "=" * 78)
+    print(f"[{metric}]  representation x acquisition  (mean over datasets & seeds)")
+    print("=" * 78)
+    mat = (final_df.groupby(["representation", "acquisition"])[metric]
+                   .mean().reset_index()
+                   .pivot(index="representation", columns="acquisition", values=metric)
+                   .reindex(index=reprs, columns=acqs))
+    mat["MEAN"] = mat.mean(axis=1)
+    print(mat.round(3).to_string())
+
+    print("\n" + "=" * 78)
+    print(f"[{metric}]  dataset x representation  (mean over acquisitions & seeds)")
+    print("=" * 78)
+    dr = (final_df.groupby(["dataset", "representation"])[metric]
+                  .mean().reset_index()
+                  .pivot(index="dataset", columns="representation", values=metric)
+                  .reindex(columns=reprs))
+    print(dr.round(3).to_string())
+
+    print("\n" + "=" * 78)
+    print(f"[{metric}]  best (representation x acquisition) cell per dataset")
+    print("=" * 78)
+    cell = (final_df.groupby(["dataset", "representation", "acquisition"])[metric]
+                    .mean().reset_index())
+    for ds in sorted(cell["dataset"].unique()):
+        sub = cell[cell.dataset == ds].sort_values(metric, ascending=False)
+        best = sub.iloc[0]
+        print(f"  {ds:28s} {best.representation:15s} x {best.acquisition:14s} "
+              f"= {best[metric]:.3f}")
 
 
 # ------------------------------------------------------------------
@@ -340,12 +397,44 @@ def main() -> None:
         "--metric", type=str, default="topk10_recall",
         help="Metric column to aggregate (default: topk10_recall)",
     )
+    parser.add_argument(
+        "--surrogate", type=str, default="rf",
+        help="Surrogate to analyze: 'rf', 'gp', or 'all' to loop over each "
+             "surrogate present (default: rf).",
+    )
+    parser.add_argument(
+        "--no_plots", action="store_true",
+        help="Only print the numeric summary tables; skip figure generation.",
+    )
+    parser.add_argument(
+        "--datasets", nargs="*", default=None,
+        help="Restrict analysis to these datasets. Use to compare representations "
+             "on a common set of datasets when the grid is ragged (e.g. reps that "
+             "only ran on a subset). Default: all datasets present.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_all_results(args.results_dir)
-    final_df = final_round_metric(df, args.metric)
+    if "surrogate" not in df.columns:      # legacy CSVs predate the column
+        df["surrogate"] = "rf"
+    if args.datasets:
+        df = df[df["dataset"].isin(args.datasets)]
+        if df.empty:
+            raise SystemExit(f"No results for datasets {args.datasets}.")
+        print(f"Restricted to {df['dataset'].nunique()} datasets: "
+              f"{sorted(df['dataset'].unique())}")
+
+    present = sorted(df["surrogate"].unique())
+    if args.surrogate == "all":
+        surrogates = present
+    elif args.surrogate in present:
+        surrogates = [args.surrogate]
+    else:
+        raise SystemExit(
+            f"No results for surrogate '{args.surrogate}'. Present: {present}"
+        )
 
     difficulty_df = pd.DataFrame()
     if args.data_dir.exists():
@@ -354,11 +443,24 @@ def main() -> None:
         print(difficulty_df.to_string(index=False))
         print()
 
-    plot_heatmap(final_df, args.metric, args.output_dir)
-    plot_repr_by_difficulty(final_df, difficulty_df, args.metric, args.output_dir)
-    plot_per_dataset_bar(final_df, difficulty_df, args.metric, args.output_dir)
+    for surrogate in surrogates:
+        sdf = df[df["surrogate"] == surrogate]
+        final_df = final_round_metric(sdf, args.metric)
+        # suffix keeps RF (default) filenames stable; tags GP/other explicitly
+        suffix = "" if surrogate == "rf" else f"_{surrogate}"
 
-    print(f"\nAll aggregate figures saved to {args.output_dir}/")
+        print(f"\n########## surrogate = {surrogate} "
+              f"({sdf['dataset'].nunique()} datasets) ##########")
+        print_summary_tables(final_df, args.metric)
+
+        if args.no_plots:
+            continue
+        plot_heatmap(final_df, args.metric, args.output_dir, suffix)
+        plot_repr_by_difficulty(final_df, difficulty_df, args.metric, args.output_dir, suffix)
+        plot_per_dataset_bar(final_df, difficulty_df, args.metric, args.output_dir, suffix)
+
+    if not args.no_plots:
+        print(f"\nAll aggregate figures saved to {args.output_dir}/")
 
 
 if __name__ == "__main__":
