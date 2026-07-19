@@ -255,15 +255,20 @@ See `docs/workflow.md` for the full per-fix process.
 | Sprint 1 — core AL loop + ESM-2 representations | ✅ Complete | 6 datasets benchmarked; key finding: PLM+retrieval+UCB best overall (0.920 topk10_recall); PABP anomaly (PLM underperforms mutation on flat landscape) |
 | Sprint 2 — new representations + GP surrogate | ✅ Complete | plm_site, plm_physico, plm_concat, GPSurrogate; pushed to main |
 | Sprint 2.5 — embed + benchmark hardening | ✅ Complete | rag-embed precomputes 4 PLM caches; GB1 separate wall time; surrogate-namespaced result paths; length-based PLM guard; 75/75 tests |
-| Sprint 3 — analysis + HFPLMEncoder | 🔄 Active | analyze synced 650M results (plot_results, crossover analysis); then ProtT5/Ankh/Profluent E1 |
+| Sprint 3 — analysis + GP run + HFPLMEncoder | 🔄 Active | 650M RF analyzed + written up (`docs/sprint1_results.md`, `docs/sprint2_results.md`, `docs/figures/`); GB1 rerun done; GP deploy fixed (srun-isolated) — GP grid being submitted; then GFP re-run, `plot_learning_curves.py`, ProtT5/Ankh/Profluent E1 |
 
 **Cluster run status:**
-- ✅ Full RF 650M benchmark (8 datasets × up to 8 reprs × 5 acqs × 3 seeds) — **complete**;
-  results synced locally to `results/`. Old 8M prototype runs archived in `results_sprint1_8M/`.
-- ⏳ Targeted GP-only benchmark on PABP + BLAT_Deng (`submit_gp_benchmark.sh`) — to run; GP
-  results land in `_gp`-suffixed dirs and rsync into the same `results/` tree.
+- ✅ Full RF 650M benchmark — **complete + analyzed**; synced to `results/`. Old 8M runs in
+  `results_sprint1_8M/`. **6/8 datasets have the full 8-rep grid** (4 BLAT + PABP + GB1,
+  whose rerun finished 2026-07-18). **GFP still 5-rep only** (needs a full-grid re-run);
+  BRCA1 = 2 non-PLM reps by design.
+- ⏳ Targeted GP-only benchmark (`submit_gp_benchmark.sh`, PABP + BLAT_Deng, 36 cells) —
+  deploy hardened (`--exclusive` node + per-cell `srun --exclusive` steps after an OOM on
+  the old shared-cgroup design); **being submitted now**. GP results land in `_gp` dirs.
 
-**Current phase:** analyzing the synced 650M results (see `docs/agent_log.md` for latest).
+**Current phase:** running the GP grid, then GP-vs-RF analysis (does GP fix the PABP
+top-of-landscape failure?). Analysis scripts are already surrogate-aware
+(`--surrogate rf|gp|all`). See `docs/agent_log.md` for the latest.
 
 ---
 
@@ -279,16 +284,17 @@ Schema validation runs automatically when `ALDataset` is constructed.
 |---------|-----------|-----------|-------|
 | `BLAT_ECOLX_Jacquier_2013` | 989 | 263 AA | Small, ordinal; PLM neutral vs mutation |
 | `BLAT_ECOLX_Deng_2012` | 4,996 | 263 AA | PLM clearly wins; largest PLM gain |
-| `BLAT_ECOLX_Firnberg_2014` | 4,783 | 263 AA | Deceptive outlier (F58N); model-based < random |
+| `BLAT_ECOLX_Firnberg_2014` | 4,783 | 263 AA | 8M: deceptive outlier (F58N), model-based < random. **Does NOT replicate at 650M** — plm_retrieval wins (topk10 0.93) |
 | `BLAT_ECOLX_Stiffler_2015` | ~2,000 | 263 AA | |
 | `PABP_YEAST_Melamed_2013` | 37,708 | 577 AA | PABP anomaly — PLM underperforms mutation; RF miscalibrated on flat landscape; primary GP motivation |
 | `BRCA1_HUMAN_Findlay_2018` | ~1,800 | 1,863 AA | Non-PLM only (exceeds ESM-2 1022-residue limit; auto-dropped by length probe) |
-| `GFP_AEQVI_Sarkisyan_2016` | ~51,000 | 238 AA | Multi-site (median ~4 muts) |
-| `SPG1_STRSG_Wu_2016` (GB1) | ~149,000 | 448 AA | 4-site combinatorial; canonical multi-site benchmark |
+| `GFP_AEQVI_Sarkisyan_2016` | ~51,000 | 238 AA | Multi-site (median ~4 muts). **RF grid is 5-rep only — full 8-rep re-run pending** |
+| `SPG1_STRSG_Wu_2016` (GB1) | ~149,000 | 448 AA | 4-site combinatorial; canonical multi-site benchmark. Full 8-rep grid done — **sharpest PLM win** (mutation 0.15 → PLM 0.79 topk10) |
 
 `submit_benchmark.sh` length-probes each CSV (`max(len(mutated_sequence))`) and drops
 PLM reps when it exceeds the ESM-2 1022-residue limit — so BRCA1 (and any future long
 dataset) automatically runs mutation/physicochemical only.
 
-**Data status:** `data/curated/` synced to cluster; 650M embeddings computed; benchmark
-results synced back to `results/`.
+**Data status:** `data/curated/` synced to cluster; 650M embeddings computed; RF benchmark
+results synced back to `results/` (6/8 datasets full 8-rep grid; GFP 5-rep pending re-run).
+Findings written up in `docs/sprint1_results.md` / `docs/sprint2_results.md`.
