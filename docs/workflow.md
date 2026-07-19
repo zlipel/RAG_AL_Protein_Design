@@ -64,38 +64,41 @@ All documented findings have been addressed.
 
 ---
 
-## Current State (as of 2026-07-15)
+## Current State (as of 2026-07-19)
 
-**Sprint 1 + 2 complete; embed/benchmark hardening complete; 650M RF sweep done.**
+**Sprint 1 + 2 + hardening complete; 650M RF sweep done, analyzed, and written up.**
 
 All original audit findings (Bugs #1–4, Gap #1, ESMEncoder performance) resolved.
-Sprint 2 delivered: `plm_site`, `plm_physico`, `plm_concat` representations;
-`pool_spearman` metric; `GPSurrogate` (ExactGP, warm-start, MLL patience).
+Sprint 2 delivered `plm_site`/`plm_physico`/`plm_concat`, `pool_spearman`, and
+`GPSurrogate`. RF 650M sweep is complete and documented in `docs/sprint1_results.md`,
+`docs/sprint2_results.md`, `docs/figures/`.
 
-Post-Sprint-2 hardening (merged to `main` this week):
-- `rag-embed` precomputes all four PLM caches (mean/delta/site/physico); GB1
-  submitted separately at a longer wall time (`feature/embed-plm-modes`, `feature/gb1-embed-walltime`).
-- Result paths namespaced by surrogate (`_gp` suffix) + `surrogate` CSV column;
-  length-based PLM exclusion replaces the hardcoded BRCA1 check
-  (`feature/benchmark-safety-guards`). `results_*/` gitignored.
+Latest work (merged to `main`, pushed):
+- Analysis scripts made surrogate/representation-aware: `plot_aggregate.py` /
+  `plot_results.py` now know all 8 reps and take `--surrogate rf|gp|all`
+  (`plot_aggregate` also `--no_plots` table mode + `--datasets` subset filter).
+- **GP benchmark deploy fixed** (`fix/gp-benchmark-deploy`): the old shared-cgroup
+  GNU-parallel design OOM'd (`sacct OUT_OF_MEMORY`); now `--exclusive` node + per-cell
+  `srun --exclusive --mem=8G` steps.
+- GB1 RF rerun completed → 6/8 datasets full 8-rep grid; GFP still 5-rep.
 
-75/75 tests passing. `ruff check src/` clean.
+`ruff check src/` clean; `src/` untouched this session (test suite unchanged).
 
-**Active branches:**
-- `main` / `audit/agent-scaffold` — in sync, all work above merged and pushed.
+**Active branches:** `main` (`171526e`) / `audit/agent-scaffold` (`be5febc`) — in sync,
+all above merged and pushed.
 
 **Cluster / results status:**
-- ✅ Full RF 650M benchmark complete; synced to `results/`. Old 8M runs archived
-  in `results_sprint1_8M/`.
-- ⏳ GP-only benchmark (`submit_gp_benchmark.sh`, PABP + BLAT_Deng) — to run.
+- ✅ RF 650M benchmark complete + analyzed. 6/8 datasets full grid (GFP 5-rep pending).
+- ⏳ GP-only benchmark (`submit_gp_benchmark.sh`, 36 cells) — deploy fixed, **being
+  submitted now**; results land in `_gp/` dirs.
 
-**Current phase — Sprint 3 analysis:**
-1. Analyze the synced 650M results: `plot_results.py` per dataset; cross-dataset
-   heatmaps; confirm/refine Sprint 1 findings (PABP anomaly, BLAT_Deng PLM gain).
-2. `plot_learning_curves.py` — crossover analysis (x-axis n_labeled: when does PLM
-   beat mutation?). Reads existing results; no new cluster runs.
-3. Run + analyze the GP benchmark; add `surrogate` to plot grouping.
-4. Then: `HFPLMEncoder` (ProtT5, Ankh, Profluent E1); low n_init sweep; ESM-2 size sweep.
+**Current phase — Sprint 3:**
+1. **Run + analyze the GP grid** (immediate): once `_gp/` results sync, run
+   `plot_aggregate.py --surrogate all --no_plots` — does GP fix PABP's top-of-landscape
+   failure? (Plotting is already surrogate-aware; no code change needed.)
+2. Full **GFP re-run** (5-rep → 8-rep grid).
+3. `plot_learning_curves.py` — n_labeled crossover (reads existing results).
+4. Then: `HFPLMEncoder` (Profluent E1, Ankh, ProtT5); low n_init sweep; ESM-2 size sweep.
 
 Start new feature work from `audit/agent-scaffold`:
 ```bash
