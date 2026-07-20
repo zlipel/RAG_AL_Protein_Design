@@ -4,8 +4,7 @@
 #SBATCH --error=logs/gp_%j_%x.err
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
-#SBATCH --exclusive
-# Whole node; GP runs on CPU. Each cell runs as its own srun --exclusive step
+# Whole node; GP runs on CPU. Each cell runs as its own srun step
 # with a per-cell memory cap (MEM_PER_CELL below).
 
 # -----------------------------------------------------------------------
