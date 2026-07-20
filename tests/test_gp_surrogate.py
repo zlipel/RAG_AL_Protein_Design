@@ -134,6 +134,43 @@ def test_gp_patience_exits_early():
 
 
 # ---------------------------------------------------------------------------
+# Pool-prediction chunking (memory bound; must not change predictions)
+# ---------------------------------------------------------------------------
+
+def test_gp_predict_chunking_matches_unchunked():
+    """Chunked pool prediction must equal a single-chunk pass (same model).
+
+    The mean is deterministic → tight tol; sigma uses LOVE (fast_pred_var), an
+    approximate variance, so it is compared with a loose tol.
+    """
+    X, y = _make_train(n=40)
+    Xq = _make_query(n=257, d=N_FEATURES)   # pool > chunk, not a multiple of it
+    sur = GPSurrogate(n_iter=30, device="cpu")
+    sur.fit(X, y)
+
+    sur.predict_batch_size = 10_000         # single chunk (>= pool)
+    mu_full, sigma_full = sur.predict(Xq)
+    sur.predict_batch_size = 16             # many chunks, uneven last chunk
+    mu_chunk, sigma_chunk = sur.predict(Xq)
+
+    assert mu_chunk.shape == (257,)
+    assert sigma_chunk.shape == (257,)
+    np.testing.assert_allclose(mu_chunk, mu_full, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(sigma_chunk, sigma_full, rtol=0.1, atol=0.1)
+
+
+def test_gp_predict_batch_size_default_and_empty_pool():
+    """Default batch size is set; empty pool returns empty arrays, not a crash."""
+    X, y = _make_train()
+    sur = GPSurrogate(device="cpu")
+    assert sur.predict_batch_size == 4096
+    sur.fit(X, y)
+    mu, sigma = sur.predict(np.empty((0, N_FEATURES)))
+    assert mu.shape == (0,)
+    assert sigma.shape == (0,)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end through runner on synthetic data
 # ---------------------------------------------------------------------------
 
