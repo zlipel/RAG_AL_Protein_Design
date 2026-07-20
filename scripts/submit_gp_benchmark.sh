@@ -4,9 +4,8 @@
 #SBATCH --error=logs/gp_%j_%x.err
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
-#SBATCH --exclusive
-# Whole node; GP runs on CPU. Each cell runs as its own srun --exclusive step
-# with a per-cell memory cap (MEM_PER_CELL below).
+# GP runs on CPU. Each cell is its own srun --exclusive step with a per-cell
+# CPU + memory cap (CPUS_PER_CELL / MEM_PER_CELL below).
 
 # -----------------------------------------------------------------------
 # Targeted GP surrogate benchmark: runs GPSurrogate on the datasets and
@@ -49,7 +48,7 @@ ESM_MAX_RESIDUES=1022    # drop PLM reps for datasets exceeding this
 
 # Per-cell srun step resources. 1 core each (single-threaded); 8 GB covers the
 # heaviest cell in this grid. Raise MEM_PER_CELL for larger pools.
-MEM_PER_CELL="${MEM_PER_CELL:-8G}"
+MEM_PER_CELL="${MEM_PER_CELL:-4G}"
 CPUS_PER_CELL="${CPUS_PER_CELL:-1}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-${SLURM_CPUS_ON_NODE:-$(nproc 2>/dev/null || echo 4)}}"
 
@@ -57,6 +56,7 @@ MAX_CONCURRENT="${MAX_CONCURRENT:-${SLURM_CPUS_ON_NODE:-$(nproc 2>/dev/null || e
 GP_N_ITER=200
 GP_LR=0.1
 GP_PATIENCE=3
+GP_BATCH_SIZE="${GP_BATCH_SIZE:-4096}"
 
 # --- Environment setup ---------------------------------------------------
 module purge
@@ -125,6 +125,7 @@ for dataset in "${DATASETS[@]}"; do
 --gp_n_iter $GP_N_ITER \
 --gp_lr $GP_LR \
 --gp_patience $GP_PATIENCE \
+--gp_predict_batch_size $GP_BATCH_SIZE \
 --rf_n_jobs 1 \
 --data_dir ${DATA_DIR} \
 --embed_cache_dir ${EMBED_CACHE_DIR} \

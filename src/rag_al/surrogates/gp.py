@@ -72,6 +72,10 @@ class GPSurrogate(AbstractSurrogate):
         MLL improvement threshold to reset patience counter.
     device : str or None
         'cuda', 'cpu', or None (auto-detect CUDA; falls back to CPU).
+    predict_batch_size : int
+        Pool rows scored per forward pass in predict(). Caps predict memory
+        at O(batch * n_train) instead of the O(n_pool^2) exact-GP variance
+        transient on large pools.
     """
 
     _CHECK_INTERVAL: int = 20  # steps between patience checks
@@ -83,12 +87,14 @@ class GPSurrogate(AbstractSurrogate):
         patience: int = 3,
         tol: float = 1e-4,
         device: Optional[str] = None,
+        predict_batch_size: int = 4096,
     ) -> None:
         self.n_iter = n_iter
         self.lr = lr
         self.patience = patience
         self.tol = tol
         self.device: str = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.predict_batch_size = predict_batch_size
 
         self._model: Optional[_GPRegressionModel] = None
         self._likelihood: Optional["gpytorch.likelihoods.GaussianLikelihood"] = None
@@ -182,15 +188,29 @@ class GPSurrogate(AbstractSurrogate):
         if self._model is None or self._likelihood is None:
             raise RuntimeError("Call fit() before predict().")
 
-        Xs = torch.tensor(
-            (X - self._X_mean) / self._X_std, dtype=torch.float32
-        ).to(self.device)
+        n = X.shape[0]
+        if n == 0:
+            empty = np.empty(0, dtype=float)
+            return empty, empty
+        # Score the pool in chunks so peak memory stays O(bs * n_train) rather
+        # than the O(n_pool^2) exact-GP variance transient. Marginals only, so
+        # chunking is exact for the mean and per-point sigma we consume.
+        bs = max(1, min(self.predict_batch_size, n))
 
+        mus: list[np.ndarray] = []
+        sigmas: list[np.ndarray] = []
         # Use the latent posterior p(f*|x*,X,y), not likelihood(model(x)) which adds
         # observation noise. AL acquisition cares about epistemic uncertainty only.
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            pred = self._model(Xs)
+            for start in range(0, n, bs):
+                Xs = torch.tensor(
+                    (X[start : start + bs] - self._X_mean) / self._X_std,
+                    dtype=torch.float32,
+                ).to(self.device)
+                pred = self._model(Xs)
+                mus.append(pred.mean.cpu().numpy())
+                sigmas.append(pred.stddev.cpu().numpy())
 
-        mu = pred.mean.cpu().numpy() * self._y_std + self._y_mean
-        sigma = pred.stddev.cpu().numpy() * self._y_std
+        mu = np.concatenate(mus) * self._y_std + self._y_mean
+        sigma = np.concatenate(sigmas) * self._y_std
         return mu, sigma
