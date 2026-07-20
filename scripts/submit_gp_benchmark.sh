@@ -56,7 +56,7 @@ MAX_CONCURRENT="${MAX_CONCURRENT:-${SLURM_CPUS_ON_NODE:-$(nproc 2>/dev/null || e
 GP_N_ITER=200
 GP_LR=0.1
 GP_PATIENCE=3
-GP_BATCH_SIZE="{GP_BATCH_SIZE:-4096}"
+GP_BATCH_SIZE="${GP_BATCH_SIZE:-4096}"
 
 # --- Environment setup ---------------------------------------------------
 module purge

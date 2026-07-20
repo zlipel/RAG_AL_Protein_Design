@@ -49,9 +49,11 @@ only the pre-existing `gpytorch` missing-stubs note (documented). Memory verifie
 throwaway probes (not committed).
 
 ### Remaining
-- `MEM_PER_CELL=8G` in `submit_gp_benchmark.sh` is now generous (peak ~1–2 GB); left as-is.
-  Chunking makes the per-cell memory isolation a safety margin rather than a necessity, and
-  removes the memory cliff for GB1 (~149K pool) if it ever enters the GP grid.
+- `submit_gp_benchmark.sh` now wires `GP_BATCH_SIZE` (default 4096) → `--gp_predict_batch_size`
+  and drops `MEM_PER_CELL` to 4G (peak ~1–2 GB/cell after chunking). Fixed a missing `$` in
+  the `GP_BATCH_SIZE` default expansion that would otherwise pass a literal string to argparse.
+  Chunking makes the per-cell memory isolation a safety margin, not a necessity, and removes
+  the memory cliff for GB1 (~149K pool) if it ever enters the GP grid.
 - Dropped `#SBATCH --exclusive` from the header (whole-node reservation no longer warranted
   once predict is chunked). The per-cell `srun --exclusive` steps now draw from a normal
   allocation, so the CPU/mem the job requests at submit time gates concurrency
