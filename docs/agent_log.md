@@ -3,6 +3,64 @@
 
 ---
 
+## 2026-07-20 — GP OOM root cause: exact-GP pool-variance transient; fix = chunked predict
+
+### Task summary
+The GP grid kept OOM-killing even at 10 GB/cell (12 concurrent, 4 cpus-per-cell). Traced
+it — with local memory probes — to `GPSurrogate.predict()` scoring the **entire pool in
+one forward pass**. Exact-GP predictive variance carries an `O(n_test^2)`-sized transient;
+at PABP scale (pool ≈ 37,658, n_train ≈ 2,610, dim 1280) a single `predict()` peaks at
+**10.63 GB**, just over the cap. Fixed by chunking the pool loop.
+
+### Why it was the GP and not the encoder / fit / pool_spearman
+- **Not the encoder:** `plm_physico` caches pooled `(D+5,)` vectors (~0.4–0.8 GB), like
+  `plm_mean`. Mutation cells (49-d) OOM'd too → not representation-driven.
+- **Not the fit:** Cholesky on n_train ≤ 2,610 is ~27 MB.
+- **Not `pool_spearman`:** `runner.py:137` computes `predict(X_pool)` once; both
+  `pool_spearman` (l.142, reuses `mu`) and the acquisition `select_batch` (l.145) consume
+  it. The full-pool predict is intrinsic to acquisition on a fixed pool — removing the
+  metric would not have helped.
+- **Why RF survived the same loop:** RF predict is per-tree, `O(n_test · n_trees)` ≈ 30 MB,
+  no covariance. The pool-sized variance transient is GP-specific. (Supersedes the earlier
+  "torch base + requested RAM" explanation — that was a contributor, not the driver.)
+- **Driver is n_test (pool), not n_train (revealed set):** chunking the *pool* fixed it,
+  which it could not if the growing labeled set were the cause. Over a 20-round loop the
+  n_train contribution adds only ~0.85 GB (chunked: 1.52 → 2.37 GB across rounds; no
+  cross-round accumulation — peak = worst single round).
+
+### Fix
+Chunk the pool in `predict()`: `bs = max(1, min(predict_batch_size, n))`, standardize +
+score per chunk, concatenate `mu`/`sigma`. Marginals only (per-point mean + stddev), so
+chunking is exact for what acquisition uses (no cross-covariance needed). Shipped
+`predict()` at PABP scale now peaks **1.12 GB** (was 10.63). Chunked vs single-chunk `mu`
+is identical; `sigma` differs only within LOVE's approximation noise.
+
+### Files changed
+- `src/rag_al/surrogates/gp.py` — `predict_batch_size` param (default 4096); chunked
+  `predict()` with per-chunk standardization + empty-pool guard.
+- `src/rag_al/core/config.py` — `gp_predict_batch_size: int = 4096` (auto CLI flag).
+- `src/rag_al/cli/benchmark.py` — `_build_surrogate` threads it into `GPSurrogate`.
+- `tests/test_gp_surrogate.py` — chunked-vs-unchunked invariance (mu tight, sigma loose);
+  default value + empty-pool contract.
+
+### Tests / checks
+`pytest` 77 passed (75 + 2 new). `ruff check` on changed files clean. `mypy` on `gp.py`:
+only the pre-existing `gpytorch` missing-stubs note (documented). Memory verified via
+throwaway probes (not committed).
+
+### Remaining
+- `submit_gp_benchmark.sh` now wires `GP_BATCH_SIZE` (default 4096) → `--gp_predict_batch_size`
+  and drops `MEM_PER_CELL` to 4G (peak ~1–2 GB/cell after chunking). Fixed a missing `$` in
+  the `GP_BATCH_SIZE` default expansion that would otherwise pass a literal string to argparse.
+  Chunking makes the per-cell memory isolation a safety margin, not a necessity, and removes
+  the memory cliff for GB1 (~149K pool) if it ever enters the GP grid.
+- Dropped `#SBATCH --exclusive` from the header (whole-node reservation no longer warranted
+  once predict is chunked). The per-cell `srun --exclusive` steps now draw from a normal
+  allocation, so the CPU/mem the job requests at submit time gates concurrency
+  (`MAX_CONCURRENT` defaults to `SLURM_CPUS_ON_NODE`).
+
+---
+
 ## 2026-07-18 — GB1 RF rerun complete; Sprint 1/2 results docs + figures
 
 ### Task summary

@@ -71,6 +71,7 @@ class BenchmarkConfig:
     gp_n_iter: int = 200      # GP: max Adam steps per round
     gp_lr: float = 0.1        # GP: Adam learning rate (0.1 is standard for MLL opt)
     gp_patience: int = 3      # GP: patience checks (each = 20 steps)
+    gp_predict_batch_size: int = 4096  # GP: pool rows scored per forward pass (caps predict memory)
 
     # ---- Acquisition hyperparameters ------------------------------------
     ucb_beta: float = 1.0           # UCB exploration weight β
