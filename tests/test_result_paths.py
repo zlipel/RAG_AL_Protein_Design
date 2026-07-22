@@ -38,6 +38,20 @@ def test_rf_and_gp_tags_differ():
     assert rf != gp
 
 
+def test_gp_ard_tag_distinct_from_isotropic():
+    """ARD GP must not overwrite isotropic GP; isotropic keeps the bare _gp tag."""
+    iso = _tag("plm_mean", "ucb", 1.0, "gp", gp_ard=False)
+    ard = _tag("plm_mean", "ucb", 1.0, "gp", gp_ard=True)
+    assert iso == "plm_mean_ucb_b1.0_gp"        # unchanged — backward compatible
+    assert ard == "plm_mean_ucb_b1.0_gp_ard"
+    assert iso != ard
+
+
+def test_gp_ard_flag_ignored_for_non_gp():
+    """gp_ard only affects GP tags; RF ignores it (no stray _ard suffix)."""
+    assert _tag("plm_mean", "ucb", 1.0, "rf", gp_ard=True) == "plm_mean_ucb_b1.0"
+
+
 # ---------------------------------------------------------------------------
 # BenchmarkPaths
 # ---------------------------------------------------------------------------
@@ -99,3 +113,17 @@ def test_config_surrogate_reaches_path():
     )
     assert rf_cfg.paths.seed_results_csv != gp_cfg.paths.seed_results_csv
     assert gp_cfg.paths.seed_results_csv.parent.name.endswith("_gp")
+
+
+def test_config_gp_ard_reaches_path():
+    """cfg.gp_ard must namespace ARD results away from the isotropic GP run."""
+    iso = BenchmarkConfig(
+        dataset="d", representation="plm_mean", acquisition="ucb",
+        surrogate="gp", gp_ard=False,
+    )
+    ard = BenchmarkConfig(
+        dataset="d", representation="plm_mean", acquisition="ucb",
+        surrogate="gp", gp_ard=True,
+    )
+    assert iso.paths.seed_results_csv != ard.paths.seed_results_csv
+    assert ard.paths.seed_results_csv.parent.name.endswith("_gp_ard")

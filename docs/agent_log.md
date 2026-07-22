@@ -3,6 +3,55 @@
 
 ---
 
+## 2026-07-22 — GP ARD kernel: opt-in per-dimension lengthscales
+
+### Task summary
+Added an opt-in ARD (Automatic Relevance Determination) Matérn kernel to
+`GPSurrogate` so the GP can learn per-feature relevance instead of one shared
+lengthscale. Motivation: the isotropic kernel is mis-specified for heterogeneous
+features and is (partly) behind the mutation-feature collapse on PABP. Kept
+default = isotropic so the analyzed `_gp` baseline is unchanged; ARD is A/B-able.
+
+### Design
+- `GPSurrogate(ard=False)`: when True, `MaternKernel(nu=1.5, ard_num_dims=D)` with
+  `D = train_x.size(-1)` (fresh per fit; D constant within a run so warm-start
+  state_dict shapes stay consistent).
+- `gp_ard: bool = False` in `BenchmarkConfig` → auto `--gp_ard` (store_true).
+- **Result-path namespacing:** `_tag` appends `_ard` only for GP+ARD → `_gp_ard`
+  dirs. Isotropic GP keeps the bare `_gp` tag (backward compatible; won't overwrite
+  the baseline). RF ignores `gp_ard`.
+- `submit_gp_benchmark.sh`: `GP_ARD=1` env toggle adds `--gp_ard` and routes to
+  `_gp_ard` dirs.
+
+### Caveat (documented, not fixed here)
+ARD is expected to help low-dim interpretable features (mutation 49-d, physico
+29-d) but is over-parameterized on 1280-d PLM (one lengthscale/dim fit by MLL on
+≤2,482 points, 50 in round 0) — may worsen the existing CG/negative-variance
+instability. This is an A/B to measure, not an assumed win. Conditioning safeguard
+(jitter/noise floor) left as a separate follow-up.
+
+### Files changed
+- `src/rag_al/surrogates/gp.py` — `ard` param + `_GPRegressionModel(ard=...)`.
+- `src/rag_al/core/config.py` — `gp_ard` field + threaded into `paths`.
+- `src/rag_al/core/paths.py` — `_tag`/`BenchmarkPaths` gain `gp_ard` → `_gp_ard` suffix.
+- `src/rag_al/cli/benchmark.py` — `_build_surrogate` passes `ard=cfg.gp_ard`.
+- `scripts/submit_gp_benchmark.sh` — `GP_ARD` toggle.
+- `tests/test_gp_surrogate.py` — ARD default-off, per-dim lengthscale count, fit/predict.
+- `tests/test_result_paths.py` — `_gp_ard` tag distinct from `_gp`; RF ignores it;
+  config→path threading.
+
+### Tests / checks
+`pytest` 83 passed (77 + 6 new). Targeted `test_gp_surrogate.py`/`test_result_paths.py`
+25/25. `ruff` clean on changed src. `mypy`: only the pre-existing gpytorch-stub note.
+End-to-end smoke run (mutation × gp × `--gp_ard`) wrote to `mutation_ucb_b1.0_gp_ard/`.
+
+### Remaining
+- Submit the ARD A/B: `GP_ARD=1 sbatch scripts/submit_gp_benchmark.sh` → compare
+  `_gp_ard` vs `_gp` (esp. does ARD rescue mutation on PABP?). `plot_gp_vs_rf.py`
+  compares surrogate *labels*; extend it (or add a variant filter) for `gp` vs `gp_ard`.
+
+---
+
 ## 2026-07-22 — GP grid analysis: GP helps PLM, breaks hand-crafted features
 
 ### Task summary

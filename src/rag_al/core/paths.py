@@ -9,6 +9,7 @@ def _tag(
     acquisition: str,
     ucb_beta: float,
     surrogate: str = "rf",
+    gp_ard: bool = False,
 ) -> str:
     """
     Generate a reproducible run tag from strategy choices.
@@ -26,6 +27,10 @@ def _tag(
         appended to the tag so their results never collide with the default
         RF run for the same (representation, acquisition, seed). 'rf' keeps the
         historical suffix-free tag for backward compatibility.
+    gp_ard : bool
+        Whether the GP used an ARD (per-dimension lengthscale) kernel. When
+        True, an ``_ard`` suffix is appended so ARD and isotropic GP runs of
+        the same cell never overwrite each other. Ignored for non-GP surrogates.
 
     Returns
     -------
@@ -37,6 +42,8 @@ def _tag(
         tag += f"_b{ucb_beta}"
     if surrogate != "rf":
         tag += f"_{surrogate}"
+    if surrogate == "gp" and gp_ard:
+        tag += "_ard"
     return tag
 
 
@@ -58,6 +65,7 @@ class BenchmarkPaths:
     seed: int
     ucb_beta: float = 1.0
     surrogate: str = "rf"
+    gp_ard: bool = False
 
     # ------------------------------------------------------------------
     # Tag
@@ -65,7 +73,10 @@ class BenchmarkPaths:
 
     @property
     def tag(self) -> str:
-        return _tag(self.representation, self.acquisition, self.ucb_beta, self.surrogate)
+        return _tag(
+            self.representation, self.acquisition, self.ucb_beta,
+            self.surrogate, self.gp_ard,
+        )
 
     # ------------------------------------------------------------------
     # Results

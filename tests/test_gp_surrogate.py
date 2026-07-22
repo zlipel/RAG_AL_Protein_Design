@@ -171,6 +171,45 @@ def test_gp_predict_batch_size_default_and_empty_pool():
 
 
 # ---------------------------------------------------------------------------
+# ARD kernel (per-dimension lengthscales)
+# ---------------------------------------------------------------------------
+
+def _kernel_lengthscale_numel(sur: GPSurrogate) -> int:
+    """Number of lengthscale parameters in the fitted Matérn kernel."""
+    return sur._model.covar_module.base_kernel.lengthscale.numel()
+
+
+def test_gp_ard_default_is_off():
+    """Default GP is isotropic — a single shared lengthscale."""
+    X, y = _make_train()
+    sur = GPSurrogate(n_iter=20, device="cpu")
+    assert sur.ard is False
+    sur.fit(X, y)
+    assert _kernel_lengthscale_numel(sur) == 1
+
+
+def test_gp_ard_gives_per_dim_lengthscales():
+    """ard=True fits one lengthscale per input dimension."""
+    X, y = _make_train(d=N_FEATURES)
+    sur = GPSurrogate(n_iter=20, device="cpu", ard=True)
+    assert sur.ard is True
+    sur.fit(X, y)
+    assert _kernel_lengthscale_numel(sur) == N_FEATURES
+
+
+def test_gp_ard_fit_predict_shapes():
+    """ARD GP still produces valid, non-negative predictions of the right shape."""
+    X, y = _make_train()
+    Xq = _make_query()
+    sur = GPSurrogate(n_iter=30, device="cpu", ard=True)
+    sur.fit(X, y)
+    mu, sigma = sur.predict(Xq)
+    assert mu.shape == (N_QUERY,)
+    assert sigma.shape == (N_QUERY,)
+    assert np.all(sigma >= 0)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end through runner on synthetic data
 # ---------------------------------------------------------------------------
 

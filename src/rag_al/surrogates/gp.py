@@ -26,18 +26,24 @@ except ImportError as _e:
 
 
 class _GPRegressionModel(gpytorch.models.ExactGP):
-    """Single-task ExactGP: ConstantMean + ScaleKernel(Matérn 3/2)."""
+    """Single-task ExactGP: ConstantMean + ScaleKernel(Matérn 3/2).
+
+    ard=True gives the Matérn kernel one lengthscale per input dimension
+    (ard_num_dims = feature count) instead of a single shared lengthscale.
+    """
 
     def __init__(
         self,
         train_x: "torch.Tensor",
         train_y: "torch.Tensor",
         likelihood: "gpytorch.likelihoods.GaussianLikelihood",
+        ard: bool = False,
     ) -> None:
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
+        ard_num_dims = train_x.size(-1) if ard else None
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.MaternKernel(nu=1.5)
+            gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=ard_num_dims)
         )
 
     def forward(self, x: "torch.Tensor") -> "gpytorch.distributions.MultivariateNormal":
@@ -76,6 +82,11 @@ class GPSurrogate(AbstractSurrogate):
         Pool rows scored per forward pass in predict(). Caps predict memory
         at O(batch * n_train) instead of the O(n_pool^2) exact-GP variance
         transient on large pools.
+    ard : bool
+        If True, use per-dimension lengthscales (ARD) in the Matérn kernel so
+        the GP learns each feature's relevance. Adds one hyperparameter per
+        input dim — well-suited to low-dim interpretable features; on very
+        high-dim inputs (e.g. 1280-d PLM) the MLL fit is over-parameterized.
     """
 
     _CHECK_INTERVAL: int = 20  # steps between patience checks
@@ -88,6 +99,7 @@ class GPSurrogate(AbstractSurrogate):
         tol: float = 1e-4,
         device: Optional[str] = None,
         predict_batch_size: int = 4096,
+        ard: bool = False,
     ) -> None:
         self.n_iter = n_iter
         self.lr = lr
@@ -95,6 +107,7 @@ class GPSurrogate(AbstractSurrogate):
         self.tol = tol
         self.device: str = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.predict_batch_size = predict_batch_size
+        self.ard = ard
 
         self._model: Optional[_GPRegressionModel] = None
         self._likelihood: Optional["gpytorch.likelihoods.GaussianLikelihood"] = None
@@ -132,7 +145,7 @@ class GPSurrogate(AbstractSurrogate):
         ).to(self.device)
 
         likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-        model = _GPRegressionModel(Xs, ys, likelihood).to(self.device)
+        model = _GPRegressionModel(Xs, ys, likelihood, ard=self.ard).to(self.device)
 
         if self._prev_state is not None:
             model.load_state_dict(self._prev_state["model"])

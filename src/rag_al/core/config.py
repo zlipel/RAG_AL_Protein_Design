@@ -72,6 +72,7 @@ class BenchmarkConfig:
     gp_lr: float = 0.1        # GP: Adam learning rate (0.1 is standard for MLL opt)
     gp_patience: int = 3      # GP: patience checks (each = 20 steps)
     gp_predict_batch_size: int = 4096  # GP: pool rows scored per forward pass (caps predict memory)
+    gp_ard: bool = False      # GP: per-dimension lengthscales (ARD Matérn kernel)
 
     # ---- Acquisition hyperparameters ------------------------------------
     ucb_beta: float = 1.0           # UCB exploration weight β
@@ -102,6 +103,7 @@ class BenchmarkConfig:
             seed=self.seed,
             ucb_beta=self.ucb_beta,
             surrogate=self.surrogate,
+            gp_ard=self.gp_ard,
         )
 
     # ------------------------------------------------------------------

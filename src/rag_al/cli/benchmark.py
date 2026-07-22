@@ -197,6 +197,7 @@ def _build_surrogate(cfg):
             lr=cfg.gp_lr,
             patience=cfg.gp_patience,
             predict_batch_size=cfg.gp_predict_batch_size,
+            ard=cfg.gp_ard,
         )
     raise ValueError(f"Unknown surrogate: {cfg.surrogate!r}")
 

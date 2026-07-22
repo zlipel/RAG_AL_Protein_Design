@@ -57,6 +57,10 @@ GP_N_ITER=200
 GP_LR=0.1
 GP_PATIENCE=3
 GP_BATCH_SIZE="${GP_BATCH_SIZE:-4096}"
+# ARD (per-dim lengthscales). GP_ARD=1 writes to _gp_ard dirs, so it never
+# overwrites the isotropic _gp baseline.
+GP_ARD="${GP_ARD:-0}"
+GP_ARD_FLAG=""; [[ "$GP_ARD" == "1" ]] && GP_ARD_FLAG="--gp_ard"
 
 # --- Environment setup ---------------------------------------------------
 module purge
@@ -127,6 +131,7 @@ for dataset in "${DATASETS[@]}"; do
 --gp_lr $GP_LR \
 --gp_patience $GP_PATIENCE \
 --gp_predict_batch_size $GP_BATCH_SIZE \
+$GP_ARD_FLAG \
 --rf_n_jobs 1 \
 --data_dir ${DATA_DIR} \
 --embed_cache_dir ${EMBED_CACHE_DIR} \
