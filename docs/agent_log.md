@@ -3,6 +3,55 @@
 
 ---
 
+## 2026-07-22 — GP grid analysis: GP helps PLM, breaks hand-crafted features
+
+### Task summary
+The 36-cell GP grid (PABP + BLAT_Deng × mutation/plm_mean/plm_physico × greedy/ucb
+× 3 seeds) completed after the predict-chunking fix — all 20 rounds, no OOM.
+Synthesized GP-vs-RF (matched on the shared {greedy, ucb} acqs; the GP grid omits
+random/diversity/retrieval, so RF's 5-acq mean is not directly comparable) and
+generated GP-specific figures.
+
+### Findings (final round, matched acqs, mean over seeds)
+- **GP + PLM on PABP fixes the peak-finding half of the anomaly.** plm_mean/plm_physico
+  `simple_regret` 0.28/0.19 (RF) → 0.04/0.00 (GP); `best_fitness` +0.2; `pool_spearman`
+  0.53/0.55 → 0.67/0.63. Validates the Sprint-2 hypothesis (RF σ miscalibration on the
+  flat landscape).
+- **GP + `mutation` on PABP collapses.** regret 0.00 → 0.86, topk10 0.60 → 0.07;
+  5/6 cells never approach the optimum. Cause = exact Matérn GP ill-conditioned on the
+  sparse 49-dim hand-crafted descriptors — the `Negative variance` / `CG residual > tol`
+  warnings in the run log are this. Also degrades BLAT_Deng mutation (topk10 0.65→0.43).
+- **topk10_recall is unchanged for PLM (~0.40).** GP finds *the* optimum, not the top-10
+  *set* → that gap is representation resolution, not calibration. The PABP "anomaly" is
+  two failures; GP fixes only one.
+- **BLAT_Deng is saturated** (RF already topk10~1.0/regret 0); GP matches on PLM →
+  negative control confirming the PABP PLM gains aren't seed noise.
+
+Net: GP is representation-conditional — pair it with PLM, not hand-crafted features.
+Full writeup: `docs/sprint3_gp_results.md`.
+
+### Files changed
+- `scripts/plot_gp_vs_rf.py` (new) — paired GP-vs-RF comparison: matches on shared
+  acquisitions, prints Δ(gp−rf) tables, saves grouped-bar figures per metric.
+- `docs/sprint3_gp_results.md` (new) — numbers-backed GP-vs-RF findings.
+- `docs/figures/gp_vs_rf/*` — GP-vs-RF bars (topk10, regret, pool_spearman, best_fitness).
+- `docs/figures/{PABP,BLAT_Deng}/*_gp_*` — GP-only learning curves via `plot_results.py --surrogate gp`.
+- `scripts/README.md` — added `plot_gp_vs_rf.py` section; removed the stale "Sprint 3 TODO"
+  (surrogate grouping is done — `plot_results.py`/`plot_aggregate.py` take `--surrogate`).
+
+### Tests / checks
+`ruff check scripts/plot_gp_vs_rf.py` clean. Analysis-only; no `src/` change (77 tests
+unaffected). Numbers cross-checked between `plot_aggregate.py --surrogate all` and the new
+script (identical).
+
+### Remaining
+- GP grid is 2 datasets only. GB1 (~149K pool) is now memory-safe under chunking if a
+  broader GP comparison is wanted; would also test whether GP helps on multi-site.
+- Consider a fit-quality guard that surfaces the negative-variance/CG-divergence signal
+  as an explicit "ill-conditioned surrogate" warning per cell.
+
+---
+
 ## 2026-07-20 — GP OOM root cause: exact-GP pool-variance transient; fix = chunked predict
 
 ### Task summary

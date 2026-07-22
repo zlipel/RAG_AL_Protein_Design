@@ -122,12 +122,32 @@ reads the dataset, representation, acquisition, surrogate, and seed columns
 written by rag-benchmark, and groups by (representation, acquisition, round) to
 compute mean and std across seeds. Shaded bands show ±1 std.
 
-> **Sprint 3 TODO:** the grouping does not yet include `surrogate`, so once GP
-> results exist it would blend RF and GP curves for the same (repr, acq). Add
-> `surrogate` to the group keys before plotting GP-vs-RF comparisons.
+Pass `--surrogate rf|gp` to select which surrogate's curves to plot (default
+`rf`); GP filenames get a `_gp` suffix so RF and GP figures never collide. For a
+paired GP-vs-RF comparison on the same axes, use `plot_gp_vs_rf.py` (below).
 
 ### Syncing results from cluster
     # results/ and results_*/ are gitignored. The current results/ holds the
     # 650M full grid; old 8M prototypes live in results_sprint1_8M/.
     rsync -avz <cluster>:<proj>/results/ ./results/
     python scripts/plot_results.py --dataset BLAT_ECOLX_Deng_2012
+
+---
+
+## plot_gp_vs_rf.py
+
+Paired **GP-vs-RF** comparison for the targeted GP grid. Pairs each
+(dataset, representation) cell across surrogates, **matched on the acquisitions
+both ran** (the GP grid omits random/diversity/retrieval, so this avoids
+comparing GP's {greedy,ucb} against RF's five). Per metric it prints a
+`Δ(gp−rf)` table and saves one grouped-bar figure (reprs on x, GP/RF pairs)
+faceted by dataset.
+
+### Usage
+    python scripts/plot_gp_vs_rf.py \
+        --datasets PABP_YEAST_Melamed_2013 BLAT_ECOLX_Deng_2012 \
+        --metrics topk10_recall simple_regret pool_spearman best_fitness \
+        --output_dir docs/figures/gp_vs_rf
+
+Only datasets with a GP run are considered. See `docs/sprint3_gp_results.md`
+for the findings this produced.
