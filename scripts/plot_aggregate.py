@@ -61,6 +61,20 @@ _ACQ_LABELS = {
 # Data loading
 # ------------------------------------------------------------------
 
+def _variant_from_tag(tag: str, col_value: str) -> str:
+    """Derive the surrogate variant from the run's directory tag.
+
+    The CSV `surrogate` column is 'gp' for both the isotropic and ARD kernels;
+    they differ only by the path suffix (`_gp` vs `_gp_ard`). Reading the suffix
+    keeps `--surrogate gp` and `--surrogate gp_ard` distinct.
+    """
+    if tag.endswith("_gp_ard"):
+        return "gp_ard"
+    if tag.endswith("_gp"):
+        return "gp"
+    return col_value
+
+
 def load_all_results(results_dir: Path) -> pd.DataFrame:
     """Load every seed_*.csv (excluding selections) across all datasets."""
     dfs = []
@@ -70,6 +84,9 @@ def load_all_results(results_dir: Path) -> pd.DataFrame:
         df = pd.read_csv(seed_csv)
         # dataset name is the immediate subdirectory of results_dir
         df["dataset"] = seed_csv.relative_to(results_dir).parts[0]
+        # distinguish isotropic (_gp) from ARD (_gp_ard) via the tag dir
+        col = df["surrogate"].iloc[0] if "surrogate" in df.columns and len(df) else "rf"
+        df["surrogate"] = _variant_from_tag(seed_csv.parent.name, col)
         dfs.append(df)
 
     if not dfs:

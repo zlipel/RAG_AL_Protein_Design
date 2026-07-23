@@ -3,6 +3,36 @@
 
 ---
 
+## 2026-07-22 — Analysis tooling: derive GP kernel variant from result path
+
+### Task summary
+Enable the ARD A/B (`_gp_ard` vs isotropic `_gp`) in the analysis scripts. The
+CSV `surrogate` column is `gp` for both kernels — they differ only by the run's
+directory tag — so the variant is now derived from the path suffix (`_gp` →
+`gp`, `_gp_ard` → `gp_ard`, else the column value). Safe while GP is the only
+kernel-variant surrogate; revisit (add a CSV column) if more variants appear.
+
+### Files changed
+- `scripts/plot_gp_vs_rf.py` — generalized from RF-vs-GP to N-variant compare:
+  `--variants` (default all present), path-derived labels, matched on the acqs
+  every compared variant ran, per-variant table + delta for 2-variant compares,
+  variant-encoded figure names (`{a}_vs_{b}_{metric}.png`).
+- `scripts/plot_aggregate.py` — same tag-derivation in the loader, so
+  `--surrogate gp_ard` resolves.
+- `scripts/README.md` — documented `--variants` + the ARD A/B usage.
+
+### Tests / checks
+`ruff` clean. Plumbing verified by synthesizing temp `_gp_ard` dirs (copies of
+`_gp`): `plot_gp_vs_rf.py --variants gp_ard gp` separated them (delta 0.0 on
+identical copies) and `plot_aggregate.py --surrogate gp_ard` resolved; temp dirs
+removed. No `src/` change (83 tests unaffected).
+
+### Remaining
+- Run the ARD sweep (`GP_ARD=1 sbatch scripts/submit_gp_benchmark.sh` on the
+  feature branch), sync `_gp_ard`, then `plot_gp_vs_rf.py --variants gp_ard gp`.
+
+---
+
 ## 2026-07-22 — GP ARD kernel: opt-in per-dimension lengthscales
 
 ### Task summary

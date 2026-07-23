@@ -136,18 +136,27 @@ paired GP-vs-RF comparison on the same axes, use `plot_gp_vs_rf.py` (below).
 
 ## plot_gp_vs_rf.py
 
-Paired **GP-vs-RF** comparison for the targeted GP grid. Pairs each
-(dataset, representation) cell across surrogates, **matched on the acquisitions
-both ran** (the GP grid omits random/diversity/retrieval, so this avoids
-comparing GP's {greedy,ucb} against RF's five). Per metric it prints a
-`Δ(gp−rf)` table and saves one grouped-bar figure (reprs on x, GP/RF pairs)
-faceted by dataset.
+Paired **surrogate-variant** comparison for the targeted GP grid. Compares each
+(dataset, representation) cell across variants, **matched on the acquisitions
+every compared variant ran** (the GP grid omits random/diversity/retrieval, so
+this avoids comparing GP's {greedy,ucb} against RF's five). Per metric it prints
+a per-variant table (with a delta column for a 2-variant compare) and saves one
+grouped-bar figure faceted by dataset.
+
+**Variants** are `rf`, `gp` (isotropic), `gp_ard`. The CSV `surrogate` column is
+`gp` for both GP kernels, so the variant is **derived from the result-dir tag**
+(`_gp` vs `_gp_ard`). Pick with `--variants` (default: all present).
 
 ### Usage
+    # RF vs isotropic GP (all present variants)
     python scripts/plot_gp_vs_rf.py \
         --datasets PABP_YEAST_Melamed_2013 BLAT_ECOLX_Deng_2012 \
         --metrics topk10_recall simple_regret pool_spearman best_fitness \
         --output_dir docs/figures/gp_vs_rf
 
-Only datasets with a GP run are considered. See `docs/sprint3_gp_results.md`
-for the findings this produced.
+    # ARD A/B: isotropic vs ARD (delta = gp_ard − gp)
+    python scripts/plot_gp_vs_rf.py --variants gp_ard gp \
+        --datasets PABP_YEAST_Melamed_2013 BLAT_ECOLX_Deng_2012
+
+`plot_aggregate.py` applies the same tag-derivation, so `--surrogate gp_ard`
+works there too. See `docs/sprint3_gp_results.md` for the isotropic findings.
