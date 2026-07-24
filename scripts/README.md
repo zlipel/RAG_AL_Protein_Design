@@ -70,19 +70,31 @@ Results appear in `results/<dataset>/<tag>/seed_<N>.csv`, where
 
 ## submit_gp_benchmark.sh
 
-Targeted **GP-only** benchmark: `GPSurrogate` on PABP + BLAT_Deng (3 reprs × 2
-acqs × 3 seeds = 36 cells). Motivated by the PABP calibration anomaly. The RF
-baseline for the same cells comes from the main sweep, so RF is **not** re-run
-here; GP results land in `_gp`-suffixed dirs and never overwrite RF. The same
-length-based PLM guard applies, so it's safe to extend `DATASETS`/`REPRS`.
+**GP-only** benchmark: `GPSurrogate` on the flagship multi-site landscapes
+**GB1 + GFP** by default (3 reprs × 2 acqs × 3 seeds = 36 cells), where PLM+GP
+is expected to win. The RF baseline for the same cells comes from the main
+sweep, so RF is **not** re-run here; GP results land in `_gp`/`_gp_ard` dirs and
+never overwrite RF. The length-based PLM guard applies (PLM reps dropped past the
+ESM-2 1022-residue limit).
 
-Runs on CPU. Requests a whole node (`--exclusive`) and launches each cell as its
-own `srun --exclusive` step with a per-cell memory cgroup, so a cell that OOMs is
-killed in isolation rather than taking down the grid, and `sacct` reports per-cell
-usage. Env-overridable knobs: `MEM_PER_CELL` (default `8G` — raise for larger
-pools), `CPUS_PER_CELL` (default `1`), `MAX_CONCURRENT` (default = node cores).
+**Kernel is representation-conditional** (per-rep, not a global flag): non-PLM
+reps (`mutation`, `physicochemical`) → **ARD** Matérn (`…_gp_ard/`), which rescues
+the isotropic collapse on low-dim hand-crafted features; PLM reps (`plm_*`) →
+**isotropic** Matérn (`…_gp/`). ARD on 1280-d PLM is ill-conditioned (CG
+non-convergence → wall-timeout — see `docs/agent_log.md`, job 11517601), so it is
+never applied to PLM.
 
+Runs on CPU. Each cell is its own `srun --exclusive` step with a per-cell CPU +
+memory cgroup, so a failing cell is contained and `sacct` reports per-cell usage.
+Env-overridable: `GP_DATASETS` / `GP_REPRS` (space-separated; default = flagship /
+`mutation plm_mean plm_physico`), `MEM_PER_CELL` (default `8G` — covers GB1's 149K
+pool), `CPUS_PER_CELL` (default `1`), `MAX_CONCURRENT` (default = node cores),
+`GP_BATCH_SIZE` (predict chunk, default `4096`). Wall time is `04:00:00`.
+
+    # flagship (GB1 + GFP)
     sbatch scripts/submit_gp_benchmark.sh
+    # target PABP/BLAT_Deng instead
+    GP_DATASETS="PABP_YEAST_Melamed_2013 BLAT_ECOLX_Deng_2012" sbatch scripts/submit_gp_benchmark.sh
 
 ---
 

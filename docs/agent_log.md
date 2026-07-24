@@ -3,6 +3,55 @@
 
 ---
 
+## 2026-07-23 — ARD sweep assessment + representation-conditional kernel; GP → flagship
+
+### Task summary
+Assessed the ARD sweep (job 11517601) and operationalized the outcome. Two findings:
+1. **ARD rescues low-dim reps.** On the case that collapsed under isotropic GP —
+   PABP `mutation` — ARD flips it: simple_regret 0.86→0.32, topk10 0.07→0.30,
+   best_fitness 2.01→2.55, pool_spearman 0.24→0.42 (mean over seeds; PABP `ucb`
+   is full 3/3, `greedy` seed-thin). Per-dim lengthscales resolve the
+   heterogeneous scaling of the 49-d hand-crafted features. Mild positive on
+   BLAT_Deng too.
+2. **ARD is numerically intractable on raw PLM.** All 24 `plm_mean`/`plm_physico`
+   ARD cells produced empty dirs — **not OOM (my first hypothesis was wrong)** but
+   **wall-timeout**. The `.err` (logs/gp_11517601_gpr_ard_test.err) shows the
+   mechanism: ARD on 1280-d PLM → ill-conditioned Gram (correlated ESM dims, near
+   low-rank) → CG hits its 1000-iter cap without converging (residual 100–285 vs
+   tol 1; 175 warnings) in both `fast_pred_var()` and the MLL solves, plus 64
+   negative-variance roundings → each cell ≫ 1 h. `mutation` (D=49) converges fast
+   → 9/12 completed before the 1 h wall.
+
+**Decision (user): kernel is representation-conditional — ARD for low-dim
+hand-crafted reps, isotropic for PLM.** Did NOT build a PLM-ARD numerical fix
+(exact-Cholesky-variance path) — weak prior it helps (1280 lengthscales
+under-determined from ≤2610 pts). Then pointed the GP grid at the flagship
+multi-site landscapes (GB1, GFP).
+
+### Files changed
+- `scripts/submit_gp_benchmark.sh` — per-rep kernel policy (`gp_ard_flag` set in
+  the loop: non-PLM → `--gp_ard`, PLM → isotropic), replacing the global `GP_ARD`
+  toggle; default `DATASETS` → flagship GB1+GFP, env-overridable via
+  `GP_DATASETS`/`GP_REPRS`; `MEM_PER_CELL` 4G→8G (GB1 149K pool); wall 1h→4h.
+- `scripts/README.md` — rewrote the `submit_gp_benchmark.sh` section (flagship
+  default, per-rep kernel, env overrides).
+- Memory: `project_status.md`, `user_surrogate_code.md` updated with the diagnosis.
+
+### Tests / checks
+`bash -n` clean. Simulated the CMD grid with the real length-probe on the local
+GB1/GFP CSVs: both within the ESM limit (448 / 238 AA) → PLM reps kept; `mutation`
+→ `--gp_ard`, `plm_*` → isotropic; 36 cells; `set -e` does not spuriously exit on
+the false `[[ ]]` per-rep test. No `src/` change (83 tests unaffected).
+
+### Remaining
+- User submits `sbatch scripts/submit_gp_benchmark.sh` (flagship) on the cluster;
+  sync `_gp`/`_gp_ard`; compare GP vs RF on GB1/GFP (`plot_gp_vs_rf.py`).
+- 3 PABP/Deng `mutation`-ARD greedy cells still missing (backfill via
+  `GP_DATASETS="…" GP_REPRS="mutation" sbatch …` if wanted for the writeup).
+- Merge `feature/gp-ard-kernel` → `audit` → `main` (ARD decision now made).
+
+---
+
 ## 2026-07-22 — Analysis tooling: derive GP kernel variant from result path
 
 ### Task summary
